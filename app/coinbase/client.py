@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Iterable, Optional
+
+import httpx
+
+from app.config import Settings, get_settings
+
+
+COINBASE_API_BASE = "https://api.coinbase.com"
+
+
+class CoinbaseAPIError(RuntimeError):
+    def __init__(self, status_code: int, content: Any):
+        super().__init__(f"Coinbase API error {status_code}: {content}")
+        self.status_code = status_code
+        self.content = content
+
+
+@dataclass(slots=True)
+class BestBidAsk:
+    product_id: str
+    best_bid: str
+    best_ask: str
+    price: str
+    time: datetime
+
+
+@dataclass(slots=True)
+class Product:
+    product_id: str
+    base_increment: str
+    quote_increment: str
+    base_min_size: str
+    base_max_size: Optional[str]
+    quote_min_size: Optional[str]
+    quote_max_size: Optional[str]
+    status: Optional[str] = None
+
+
+@dataclass(slots=True)
+class Candle:
+    start: datetime
+    low: float
+    high: float
+    open: float
+    close: float
+    volume: float
+
+
+class CoinbaseClient:
+    """Thin wrapper around Coinbase Advanced Trade REST endpoints."""
+
+    def __init__(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        settings: Optional[Settings] = None,
+        base_url: str = COINBASE_API_BASE,
+        timeout: float = 15.0,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> None:
+        settings = settings or get_settings()
+        self.api_key = api_key or settings.coinbase_api_key
+        self.api_secret = api_secret or settings.coinbase_api_secret
+        self.base_url = base_url.rstrip("/")
+        if not self.api_key or not self.api_secret:
+            raise ValueError("Coinbase API credentials are not configured")
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+
+    async def close(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> "CoinbaseClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        await self.close()
+
+    async def get_best_bid_ask(self, product_id: str) -> BestBidAsk:
+        payload = await self._request("GET", "/api/v3/brokerage/best_bid_ask", params={"product_ids": product_id})
+        if not payload.get("pricebooks"):
+            raise CoinbaseAPIError(404, payload)
+        data = payload["pricebooks"][0]
+        ts = datetime.fromtimestamp(float(data["time"]), tz=timezone.utc)
+        return BestBidAsk(
+            product_id=data["product_id"],
+            best_bid=data["bids"][0]["price"] if data["bids"] else data.get("price", "0"),
+            best_ask=data["asks"][0]["price"] if data["asks"] else data.get("price", "0"),
+            price=data.get("price", "0"),
+            time=ts,
+        )
+
+    async def get_product(self, product_id: str) -> Product:
+        payload = await self._request("GET", f"/api/v3/brokerage/products/{product_id}")
+        return Product(
+            product_id=payload["product_id"],
+            base_increment=payload["base_increment"],
+            quote_increment=payload["quote_increment"],
+            base_min_size=payload["base_min_size"],
+            base_max_size=payload.get("base_max_size"),
+            quote_min_size=payload.get("quote_min_size"),
+            quote_max_size=payload.get("quote_max_size"),
+            status=payload.get("status"),
+        )
+
+    async def get_product_candles(
+        self,
+        product_id: str,
+        *,
+        granularity: str = "FIVE_MINUTE",
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 300,
+    ) -> list[Candle]:
+        params: dict[str, Any] = {
+            "product_id": product_id,
+            "granularity": granularity,
+            "limit": limit,
+        }
+        if start:
+            params["start"] = start.astimezone(timezone.utc).isoformat()
+        if end:
+            params["end"] = end.astimezone(timezone.utc).isoformat()
+
+        payload = await self._request("GET", f"/api/v3/brokerage/products/{product_id}/candles", params=params)
+        candles: list[Candle] = []
+        for entry in payload.get("candles", []):
+            candles.append(
+                Candle(
+                    start=datetime.fromtimestamp(entry["start"] / 1000, tz=timezone.utc),
+                    low=float(entry["low"]),
+                    high=float(entry["high"]),
+                    open=float(entry["open"]),
+                    close=float(entry["close"]),
+                    volume=float(entry["volume"]),
+                )
+            )
+        candles.sort(key=lambda c: c.start)
+        return candles
+
+    async def list_fills(
+        self,
+        *,
+        product_id: Optional[str] = None,
+        order_ids: Optional[Iterable[str]] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if product_id:
+            params["product_id"] = product_id
+        if order_ids:
+            params["order_ids"] = ",".join(order_ids)
+        payload = await self._request("GET", "/api/v3/brokerage/orders/historical/fills", params=params)
+        return payload.get("fills", [])
+
+    async def list_orders(
+        self,
+        *,
+        product_id: Optional[str] = None,
+        order_status: Optional[list[str]] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if product_id:
+            params["product_id"] = product_id
+        if order_status:
+            params["order_status"] = ",".join(order_status)
+        payload = await self._request("GET", "/api/v3/brokerage/orders/historical/batch", params=params)
+        return payload.get("orders", [])
+
+    async def create_order(self, order: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", "/api/v3/brokerage/orders", json_body=order)
+
+    async def cancel_orders(self, order_ids: Iterable[str]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v3/brokerage/orders/batch_cancel",
+            json_body={"order_ids": list(order_ids)},
+        )
+
+    async def list_accounts(
+        self,
+        *,
+        cursor: Optional[str] = None,
+        limit: int = 250,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return await self._request("GET", "/api/v3/brokerage/accounts", params=params)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        json_body: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        body = json.dumps(json_body) if json_body else ""
+        timestamp = str(int(time.time()))
+        message = f"{timestamp}{method.upper()}{path}{body}"
+        secret = base64.b64decode(self.api_secret)
+        signature = hmac.new(secret, message.encode("utf-8"), hashlib.sha256).digest()
+        signature_b64 = base64.b64encode(signature).decode()
+
+        headers = {
+            "CB-ACCESS-KEY": self.api_key,
+            "CB-ACCESS-SIGN": signature_b64,
+            "CB-ACCESS-TIMESTAMP": timestamp,
+            "Content-Type": "application/json",
+            "CB-VERSION": "2023-10-01",
+        }
+
+        response = await self._client.request(method, path, params=params, content=body if body else None, headers=headers)
+        if response.status_code >= 400:
+            raise CoinbaseAPIError(response.status_code, response.text)
+        return response.json()

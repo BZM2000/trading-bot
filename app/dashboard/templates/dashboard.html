@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>ETH-USDC Trading Dashboard</h1>
+<p>Environment: {{ settings.environment }} · Product: {{ settings.product_id }} · Timezone: {{ settings.app_timezone }}</p>
+
+{% include "partials/plans.html" %}
+{% include "partials/orders.html" %}
+{% include "partials/runs.html" %}
+{% endblock %}

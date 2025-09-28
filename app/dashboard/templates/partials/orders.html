@@ -1,0 +1,66 @@
+<section
+  id="orders-section"
+  hx-get="/dashboard/orders"
+  hx-trigger="load, every 120s"
+  hx-target="#orders-section"
+  hx-swap="outerHTML"
+>
+  <h2>Orders</h2>
+  <h3>Open Orders</h3>
+  {% if open_orders %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Side</th>
+        <th>Price</th>
+        <th>Size</th>
+        <th>Status</th>
+        <th>Expiry</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for order in open_orders %}
+      <tr>
+        <td>{{ order.order_id }}</td>
+        <td>{{ order.side.value }}</td>
+        <td>{{ order.limit_price }}</td>
+        <td>{{ order.base_size }}</td>
+        <td>{{ order.status.value }}</td>
+        <td>{{ order.end_time.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No open orders.</p>
+  {% endif %}
+
+  <h3>Recent Executed Orders</h3>
+  {% if recent_executed %}
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Side</th>
+        <th>Price</th>
+        <th>Size</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for order in recent_executed %}
+      <tr>
+        <td>{{ (order.ts_filled or order.ts_submitted).strftime('%Y-%m-%d %H:%M') }} UTC</td>
+        <td>{{ order.side.value }}</td>
+        <td>{{ order.limit_price }}</td>
+        <td>{{ order.base_size }}</td>
+        <td>{{ order.status.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No executions in the last 24 hours.</p>
+  {% endif %}
+</section>

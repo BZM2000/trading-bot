@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Trading Bot Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="https://unpkg.com/milligram/dist/milligram.min.css" />
+    <script src="https://unpkg.com/htmx.org@1.9.10" defer></script>
+    <style>
+      body { margin: 2rem; }
+      pre { white-space: pre-wrap; background: #f6f8fa; padding: 1rem; border-radius: 4px; }
+      table { width: 100%; }
+      th, td { font-size: 0.9rem; }
+      section { margin-bottom: 2.5rem; }
+      .status-success { color: #2d862d; }
+      .status-failed { color: #c0392b; }
+      .status-running { color: #1f618d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
