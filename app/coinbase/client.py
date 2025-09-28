@@ -223,22 +223,64 @@ class CoinbaseClient:
             self._ed25519_private_key = ed25519.Ed25519PrivateKey.from_private_bytes(key_bytes)
         return self._ed25519_private_key
 
+    def _ecdsa_key_material_candidates(self) -> list[bytes]:
+        candidates: list[bytes] = []
+        secret = self._secret_bytes
+        if secret:
+            candidates.append(secret)
+            if len(secret) in (64, 65):
+                candidates.append(secret[:32])
+
+        raw_secret = (self.api_secret or "").strip()
+        if raw_secret:
+            hex_candidate = raw_secret
+            if raw_secret.lower().startswith("0x"):
+                hex_candidate = raw_secret[2:]
+            if len(hex_candidate) % 2 == 0:
+                try:
+                    decoded = binascii.unhexlify(hex_candidate)
+                except (binascii.Error, ValueError):
+                    decoded = b""
+                else:
+                    if decoded:
+                        candidates.append(decoded)
+                        if len(decoded) > 32:
+                            candidates.append(decoded[:32])
+
+        seen: set[bytes] = set()
+        unique_candidates: list[bytes] = []
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                unique_candidates.append(candidate)
+                seen.add(candidate)
+        return unique_candidates
+
     def _get_ecdsa_private_key(self) -> ec.EllipticCurvePrivateKey:
         if self._ecdsa_private_key is None:
-            secret = self._secret_bytes
-            for loader in (serialization.load_pem_private_key, serialization.load_der_private_key):
-                try:
-                    key = loader(secret, password=None)
-                except (ValueError, TypeError):
-                    continue
-                if isinstance(key, ec.EllipticCurvePrivateKey):
-                    self._ecdsa_private_key = key
+            for secret in self._ecdsa_key_material_candidates():
+                for loader in (serialization.load_pem_private_key, serialization.load_der_private_key):
+                    try:
+                        key = loader(secret, password=None)
+                    except (ValueError, TypeError):
+                        continue
+                    if isinstance(key, ec.EllipticCurvePrivateKey):
+                        self._ecdsa_private_key = key
+                        break
+                if self._ecdsa_private_key is not None:
                     break
-            if self._ecdsa_private_key is None and len(secret) == 32:
-                scalar = int.from_bytes(secret, "big")
-                self._ecdsa_private_key = ec.derive_private_key(scalar, ec.SECP256K1())
+
+                if len(secret) == 32:
+                    scalar = int.from_bytes(secret, "big")
+                    try:
+                        self._ecdsa_private_key = ec.derive_private_key(scalar, ec.SECP256K1())
+                    except ValueError:
+                        self._ecdsa_private_key = None
+                    else:
+                        break
             if self._ecdsa_private_key is None:
-                raise ValueError("Unable to parse ECDSA private key for Coinbase signing")
+                raise ValueError(
+                    "Unable to parse ECDSA private key for Coinbase signing. Provide a PEM/DER-encoded key, 32-byte base64, or 32-byte hex value."
+                )
         return self._ecdsa_private_key
 
     def _sign_message(self, message: str) -> str:
