@@ -4,6 +4,26 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+
+def _normalise_database_url(url: str) -> str:
+    """Ensure Postgres URLs use the psycopg driver when unspecified."""
+
+    try:
+        sa_url = make_url(url)
+    except Exception:
+        return url
+
+    driver = sa_url.drivername
+    if driver in {"postgres", "postgresql"}:
+        sa_url = sa_url.set(drivername="postgresql+psycopg")
+    elif driver == "postgresql+psycopg2":
+        sa_url = sa_url.set(drivername="postgresql+psycopg")
+
+    if hasattr(sa_url, "render_as_string"):
+        return sa_url.render_as_string(hide_password=False)
+    return str(sa_url)
 
 
 class Settings(BaseSettings):
@@ -82,6 +102,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_credentials(self) -> "Settings":
+        self.database_url = _normalise_database_url(self.database_url)
         if not self.llm_stub_mode and not self.openai_api_key:
             raise ValueError(
                 "OPENAI_API_KEY must be set when LLM_STUB_MODE is false"

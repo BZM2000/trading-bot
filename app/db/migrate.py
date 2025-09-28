@@ -44,6 +44,9 @@ def _should_stamp_head(database_url: str) -> bool:
             return False
 
         return True
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on driver availability
+        LOGGER.warning("Database driver missing during migration inspection", exc_info=exc)
+        return False
     except SQLAlchemyError as exc:
         LOGGER.warning("Unable to inspect database prior to migrations", exc_info=exc)
         return False
