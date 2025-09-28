@@ -5,6 +5,7 @@ from typing import AsyncIterator
 from apscheduler.events import EVENT_JOB_ERROR, JobExecutionEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import RedirectResponse
 
 from app.config import Settings, get_settings
 from app.dashboard.routes import router as dashboard_router
@@ -66,6 +67,11 @@ app.include_router(dashboard_router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/")
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/")
 
 
 def get_app_settings(request: Request) -> Settings:
