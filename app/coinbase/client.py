@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -208,22 +207,27 @@ class CoinbaseClient:
         params: Optional[dict[str, Any]] = None,
         json_body: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        body = json.dumps(json_body) if json_body else ""
+        request = self._client.build_request(method, path, params=params, json=json_body)
+        body = request.content.decode() if request.content else ""
         timestamp = str(int(time.time()))
-        message = f"{timestamp}{method.upper()}{path}{body}"
+        request_path = request.url.raw_path.decode()
+        message = f"{timestamp}{method.upper()}{request_path}{body}"
         secret = base64.b64decode(self.api_secret)
         signature = hmac.new(secret, message.encode("utf-8"), hashlib.sha256).digest()
         signature_b64 = base64.b64encode(signature).decode()
 
-        headers = {
-            "CB-ACCESS-KEY": self.api_key,
-            "CB-ACCESS-SIGN": signature_b64,
-            "CB-ACCESS-TIMESTAMP": timestamp,
-            "Content-Type": "application/json",
-            "CB-VERSION": "2023-10-01",
-        }
+        request.headers.update(
+            {
+                "CB-ACCESS-KEY": self.api_key,
+                "CB-ACCESS-SIGN": signature_b64,
+                "CB-ACCESS-TIMESTAMP": timestamp,
+                "CB-VERSION": "2023-10-01",
+            }
+        )
+        if body and "content-type" not in request.headers:
+            request.headers["Content-Type"] = "application/json"
 
-        response = await self._client.request(method, path, params=params, content=body if body else None, headers=headers)
+        response = await self._client.send(request)
         if response.status_code >= 400:
             raise CoinbaseAPIError(response.status_code, response.text)
         return response.json()
