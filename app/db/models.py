@@ -34,6 +34,12 @@ class RunStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+def _enum_values(enum_cls: type[enum.Enum]) -> list[str]:
+    """Return the JSON-serialisable values for a SQLAlchemy Enum."""
+
+    return [member.value for member in enum_cls]
+
+
 class OrderSide(str, enum.Enum):
     BUY = "BUY"
     SELL = "SELL"
@@ -51,10 +57,18 @@ class RunLog(Base):
     __tablename__ = "run_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    kind: Mapped[RunKind] = mapped_column(Enum(RunKind, name="run_kind"), nullable=False, index=True)
+    kind: Mapped[RunKind] = mapped_column(
+        Enum(RunKind, name="run_kind", values_callable=_enum_values, validate_strings=True),
+        nullable=False,
+        index=True,
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    status: Mapped[RunStatus] = mapped_column(Enum(RunStatus, name="run_status"), default=RunStatus.RUNNING, nullable=False)
+    status: Mapped[RunStatus] = mapped_column(
+        Enum(RunStatus, name="run_status", values_callable=_enum_values, validate_strings=True),
+        default=RunStatus.RUNNING,
+        nullable=False,
+    )
     usage_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     error_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
