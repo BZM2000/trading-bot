@@ -4,29 +4,14 @@ from decimal import Decimal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import make_url
+
+from app.db.url_normaliser import normalise_database_url
 
 
 def _normalise_database_url(url: str | None) -> str | None:
     """Ensure Postgres URLs use the psycopg driver when unspecified."""
 
-    if url is None:
-        return None
-
-    try:
-        sa_url = make_url(url)
-    except Exception:
-        return url
-
-    driver = sa_url.drivername
-    if driver in {"postgres", "postgresql"}:
-        sa_url = sa_url.set(drivername="postgresql+psycopg")
-    elif driver == "postgresql+psycopg2":
-        sa_url = sa_url.set(drivername="postgresql+psycopg")
-
-    if hasattr(sa_url, "render_as_string"):
-        return sa_url.render_as_string(hide_password=False)
-    return str(sa_url)
+    return normalise_database_url(url)
 
 
 class Settings(BaseSettings):

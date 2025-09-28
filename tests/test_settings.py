@@ -23,6 +23,14 @@ def test_database_url_normalises_postgres_alias() -> None:
     assert settings.database_url.startswith("postgresql+psycopg://")
 
 
+def test_database_url_converts_psycopg2_driver() -> None:
+    settings = Settings(
+        LLM_STUB_MODE=True,
+        DATABASE_URL="postgresql+psycopg2://user:pass@localhost/db",
+    )
+    assert settings.database_url.startswith("postgresql+psycopg://")
+
+
 def test_scheduler_jobstore_url_normalised() -> None:
     settings = Settings(
         LLM_STUB_MODE=True,

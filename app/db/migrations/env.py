@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.db.models import Base
+from app.db.url_normaliser import normalise_database_url
 
 config = context.config
 
@@ -15,15 +16,15 @@ if config.config_file_name is not None:
 
 
 def get_url() -> str:
-    """Return the database URL passed in by the runtime or fall back sensibly."""
+    """Return the configured database URL with sensible defaults."""
 
     runtime_url = config.get_main_option("sqlalchemy.url")
     if runtime_url:
-        return runtime_url
+        return normalise_database_url(runtime_url) or runtime_url
 
     env_url = os.getenv("DATABASE_URL")
     if env_url:
-        return env_url
+        return normalise_database_url(env_url) or env_url
 
     return "sqlite:///./trading_bot.db"
 
