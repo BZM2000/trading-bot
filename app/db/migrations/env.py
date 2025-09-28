@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config import get_settings
 from app.db.models import Base
 
 config = context.config
@@ -15,7 +15,17 @@ if config.config_file_name is not None:
 
 
 def get_url() -> str:
-    return get_settings().database_url
+    """Return the database URL passed in by the runtime or fall back sensibly."""
+
+    runtime_url = config.get_main_option("sqlalchemy.url")
+    if runtime_url:
+        return runtime_url
+
+    env_url = os.getenv("DATABASE_URL")
+    if env_url:
+        return env_url
+
+    return "sqlite:///./trading_bot.db"
 
 
 target_metadata = Base.metadata
