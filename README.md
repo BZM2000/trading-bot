@@ -28,8 +28,8 @@ Update the file with real credentials and desired toggles. Key variables:
 - `OPENAI_API_KEY`: OpenAI Responses API key.
 - `COINBASE_API_KEY` / `COINBASE_API_SECRET`: Coinbase Advanced Trade credentials.
 - `DATABASE_URL`: SQLAlchemy URL (e.g. `postgresql+psycopg://user:pass@localhost:5432/trading_bot`).
-- `LLM_STUB_MODE`: set to `true` for offline testing with canned LLM outputs.
-- `EXECUTION_ENABLED`: set to `true` to allow the executor to place real orders (default `false`).
+- `LLM_STUB_MODE`: set to `true` for offline testing with canned LLM outputs (OpenAI key optional in this mode).
+- `EXECUTION_ENABLED`: set to `true` to allow the executor to place real orders (requires Coinbase credentials; default `false`).
 - `OPENAI_REASONING_M1` / `OPENAI_REASONING_M2` / `OPENAI_REASONING_M3` / `OPENAI_REASONING_SUMMARISER`: override reasoning effort per model (`high`, `medium`, `minimal`). Defaults align with the repository guidelines.
 
 ## Dependency installation

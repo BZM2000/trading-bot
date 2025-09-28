@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Optional
 from decimal import Decimal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,9 +15,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    openai_api_key: str = Field(default=..., validation_alias="OPENAI_API_KEY")
-    coinbase_api_key: str = Field(default=..., validation_alias="COINBASE_API_KEY")
-    coinbase_api_secret: str = Field(default=..., validation_alias="COINBASE_API_SECRET")
+    openai_api_key: Optional[str] = Field(
+        default=None, validation_alias="OPENAI_API_KEY"
+    )
+    coinbase_api_key: Optional[str] = Field(
+        default=None, validation_alias="COINBASE_API_KEY"
+    )
+    coinbase_api_secret: Optional[str] = Field(
+        default=None, validation_alias="COINBASE_API_SECRET"
+    )
     database_url: str = Field(default=..., validation_alias="DATABASE_URL")
 
     environment: str = Field(default="local", validation_alias="ENVIRONMENT")
@@ -67,6 +73,19 @@ class Settings(BaseSettings):
     openai_responses_reasoning_summariser: str = Field(
         default="minimal", validation_alias="OPENAI_REASONING_SUMMARISER"
     )
+
+
+    @model_validator(mode="after")
+    def _require_credentials(self) -> "Settings":
+        if not self.llm_stub_mode and not self.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY must be set when LLM_STUB_MODE is false"
+            )
+        if self.execution_enabled and not (self.coinbase_api_key and self.coinbase_api_secret):
+            raise ValueError(
+                "COINBASE_API_KEY and COINBASE_API_SECRET must be set when EXECUTION_ENABLED is true"
+            )
+        return self
 
 
 @lru_cache
