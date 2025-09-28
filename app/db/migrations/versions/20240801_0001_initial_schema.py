@@ -36,7 +36,7 @@ def upgrade() -> None:
     op.create_table(
         "run_logs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("kind", run_kind_enum, nullable=False, index=True),
+        sa.Column("kind", run_kind_enum, nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("status", run_status_enum, nullable=False),
