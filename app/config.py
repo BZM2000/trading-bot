@@ -7,8 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 
-def _normalise_database_url(url: str) -> str:
+def _normalise_database_url(url: str | None) -> str | None:
     """Ensure Postgres URLs use the psycopg driver when unspecified."""
+
+    if url is None:
+        return None
 
     try:
         sa_url = make_url(url)
@@ -102,7 +105,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_credentials(self) -> "Settings":
-        self.database_url = _normalise_database_url(self.database_url)
+        self.database_url = _normalise_database_url(self.database_url) or self.database_url
+        self.scheduler_jobstore_url = _normalise_database_url(self.scheduler_jobstore_url)
         if not self.llm_stub_mode and not self.openai_api_key:
             raise ValueError(
                 "OPENAI_API_KEY must be set when LLM_STUB_MODE is false"

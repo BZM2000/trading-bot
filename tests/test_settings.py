@@ -21,3 +21,12 @@ def test_database_url_normalises_postgres_alias() -> None:
         DATABASE_URL="postgres://user:pass@localhost/db",
     )
     assert settings.database_url.startswith("postgresql+psycopg://")
+
+
+def test_scheduler_jobstore_url_normalised() -> None:
+    settings = Settings(
+        LLM_STUB_MODE=True,
+        DATABASE_URL="sqlite:///./local.db",
+        SCHEDULER_JOBSTORE_URL="postgres://user:pass@localhost/db",
+    )
+    assert settings.scheduler_jobstore_url.startswith("postgresql+psycopg://")
