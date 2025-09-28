@@ -8,7 +8,6 @@ from fastapi import Depends, FastAPI, Request
 
 from app.config import Settings, get_settings
 from app.dashboard.routes import router as dashboard_router
-from app.db.migrate import run_migrations
 from app.logging import setup_logging
 from app.scheduler.jobs import register_jobs, router as scheduler_router
 from app.scheduler.orchestration import SchedulerOrchestrator
@@ -43,8 +42,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    if settings.auto_migrate_on_start:
-        run_migrations(settings.database_url)
 
     app.state.settings = settings
     scheduler = create_scheduler(settings)

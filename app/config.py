@@ -72,9 +72,6 @@ class Settings(BaseSettings):
     execution_enabled: bool = Field(
         default=False, validation_alias="EXECUTION_ENABLED"
     )
-    auto_migrate_on_start: bool = Field(
-        default=True, validation_alias="AUTO_MIGRATE_ON_START"
-    )
 
     openai_responses_model_m1: str = Field(
         default="gpt-5", validation_alias="OPENAI_MODEL_M1"
