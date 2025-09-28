@@ -38,7 +38,7 @@ def _handle_job_error(event: JobExecutionEvent) -> None:
 
 
 @asynccontextmanager
-def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     setup_logging(settings.log_level)
 
