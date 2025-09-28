@@ -20,7 +20,11 @@ def get_engine(settings: Settings | None = None) -> Engine:
         return _ENGINE
 
     settings = settings or get_settings()
-    _ENGINE = create_engine(settings.database_url, future=True, pool_pre_ping=True)
+    database_url = settings.database_url
+    create_kwargs = {"future": True, "pool_pre_ping": True}
+    if database_url.startswith("sqlite"):
+        create_kwargs["connect_args"] = {"check_same_thread": False}
+    _ENGINE = create_engine(database_url, **create_kwargs)
     return _ENGINE
 
 

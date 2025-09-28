@@ -11,7 +11,7 @@ This project implements a local-first orchestration layer for an ETH-USDC limit-
 ## Prerequisites
 
 - Python 3.11+
-- PostgreSQL 14+
+- SQLite (default) or PostgreSQL 14+ for production deployments
 - OpenAI API key (Responses API access)
 - Coinbase Advanced Trade API key/secret
 
@@ -27,9 +27,10 @@ Update the file with real credentials and desired toggles. Key variables:
 
 - `OPENAI_API_KEY`: OpenAI Responses API key.
 - `COINBASE_API_KEY` / `COINBASE_API_SECRET`: Coinbase Advanced Trade credentials.
-- `DATABASE_URL`: SQLAlchemy URL (e.g. `postgresql+psycopg://user:pass@localhost:5432/trading_bot`).
+- `DATABASE_URL`: SQLAlchemy URL. Defaults to `sqlite:///./trading_bot.db` for local testing; set your Railway Postgres URL when deploying.
 - `LLM_STUB_MODE`: set to `true` for offline testing with canned LLM outputs (OpenAI key optional in this mode).
 - `EXECUTION_ENABLED`: set to `true` to allow the executor to place real orders (requires Coinbase credentials; default `false`).
+- `AUTO_MIGRATE_ON_START`: keep `true` so the app runs Alembic migrations automatically on startup (set `false` if you prefer manual control).
 - `OPENAI_REASONING_M1` / `OPENAI_REASONING_M2` / `OPENAI_REASONING_M3` / `OPENAI_REASONING_SUMMARISER`: override reasoning effort per model (`high`, `medium`, `minimal`). Defaults align with the repository guidelines.
 
 ## Dependency installation
@@ -42,13 +43,13 @@ pip install -r requirements.txt
 
 ## Database migrations
 
-Initialise the schema with Alembic:
+Initialise the schema with Alembic (optional when `AUTO_MIGRATE_ON_START=true` because the app runs this on boot):
 
 ```bash
 alembic -c alembic.ini upgrade head
 ```
 
-The Alembic environment reads `DATABASE_URL` via the application settings module.
+The Alembic environment reads `DATABASE_URL` via the application settings module. SQLite users can skip this step because the default file-backed database is created on first run.
 
 ## Running the application
 
@@ -92,10 +93,13 @@ docker build -t trading-bot .
 docker run --env-file .env -p 8000:8000 trading-bot
 ```
 
-Ensure the container can reach PostgreSQL and has valid API credentials.
+Provide Railway Postgres credentials via `DATABASE_URL` when running against managed storage; otherwise the default SQLite file will be used inside the container.
 
 ## Notes & next steps
 
 - `LLM_STUB_MODE=true` keeps the system offline-friendly during development. Toggle off when ready for real OpenAI calls.
+- Override `DATABASE_URL` only when you provision a managed database (e.g. Railway Postgres); the default SQLite file supports local experimentation.
+- Leave `AUTO_MIGRATE_ON_START=true` on Railway so migrations run automatically during deploys; set it to `false` only if you manage Alembic manually.
+- Portfolio snapshots fed into Model 2 only include the base/quote assets for the configured product to minimise LLM token usage.
 - `EXECUTION_ENABLED` must remain false unless you are prepared to place real orders.
 - Extend `tests/` with integration tests as real API credentials become available.

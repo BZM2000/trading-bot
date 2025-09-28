@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     coinbase_api_secret: Optional[str] = Field(
         default=None, validation_alias="COINBASE_API_SECRET"
     )
-    database_url: str = Field(default=..., validation_alias="DATABASE_URL")
+    database_url: str = Field(
+        default="sqlite:///./trading_bot.db", validation_alias="DATABASE_URL"
+    )
 
     environment: str = Field(default="local", validation_alias="ENVIRONMENT")
     app_timezone: str = Field(default="UTC", validation_alias="APP_TIMEZONE")
@@ -46,6 +48,9 @@ class Settings(BaseSettings):
     llm_stub_mode: bool = Field(default=False, validation_alias="LLM_STUB_MODE")
     execution_enabled: bool = Field(
         default=False, validation_alias="EXECUTION_ENABLED"
+    )
+    auto_migrate_on_start: bool = Field(
+        default=True, validation_alias="AUTO_MIGRATE_ON_START"
     )
 
     openai_responses_model_m1: str = Field(

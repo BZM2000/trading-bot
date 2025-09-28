@@ -22,6 +22,26 @@ from app.llm.usage import UsageTracker
 logger = logging.getLogger("scheduler.orchestrator")
 
 
+
+
+def _currencies_for_product(product_id: str) -> set[str]:
+    for separator in ("-", "/"):
+        if separator in product_id:
+            base, quote = product_id.split(separator, 1)
+            return {base.upper(), quote.upper()}
+    return {product_id.upper()}
+
+
+def filter_portfolio_balances(product_id: str, balances: dict[str, Any]) -> dict[str, Any]:
+    allowed = _currencies_for_product(product_id)
+    filtered: dict[str, Any] = {}
+    for currency, snapshot in balances.items():
+        if not currency:
+            continue
+        if currency.upper() in allowed:
+            filtered[currency] = snapshot
+    return filtered
+
 class SchedulerOrchestrator:
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
@@ -290,12 +310,13 @@ class SchedulerOrchestrator:
                 "hold": account.get("hold", {}).get("value"),
                 "balance": account.get("balance", {}).get("value"),
             }
+        filtered_balances = filter_portfolio_balances(self.settings.product_id, balances)
         with session_scope(self.settings) as session:
             crud.record_portfolio_snapshot(
                 session,
-                crud.PortfolioSnapshotRecord(ts=datetime.now(timezone.utc), balances_json=balances),
+                crud.PortfolioSnapshotRecord(ts=datetime.now(timezone.utc), balances_json=filtered_balances),
             )
-        return balances
+        return filtered_balances
 
     async def _check_price_drift(self, market_service: MarketService, start_mid: Any) -> bool:
         current = await market_service.current_snapshot(self.settings.product_id)
@@ -336,7 +357,7 @@ class SchedulerOrchestrator:
             lines.append(
                 f"{currency}: available={entry.get('available')} hold={entry.get('hold')} total={entry.get('balance')}"
             )
-        return "\n".join(lines)
+        return "\n".join(lines) if lines else "(no balances for target product)"
 
     def _format_market_snapshot(self, snapshot) -> str:
         parts = [
