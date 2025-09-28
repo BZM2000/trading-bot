@@ -38,8 +38,19 @@ def json_dumps(payload: Dict[str, Any]) -> str:
     return dumps(payload, default=str, separators=(",", ":"))
 
 
+def _normalise_level(level: str) -> str:
+    """Return a logging level string compatible with dictConfig."""
+
+    candidate = level.strip()
+    if not candidate:
+        return "INFO"
+    return candidate.upper()
+
+
 def setup_logging(level: str = "INFO") -> None:
     """Configure root and uvicorn loggers for structured output."""
+
+    normalised_level = _normalise_level(level)
 
     logging_config = {
         "version": 1,
@@ -57,11 +68,11 @@ def setup_logging(level: str = "INFO") -> None:
             }
         },
         "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": level, "propagate": False},
-            "uvicorn.access": {"handlers": ["default"], "level": level, "propagate": False},
-            "apscheduler": {"handlers": ["default"], "level": level, "propagate": False},
+            "uvicorn": {"handlers": ["default"], "level": normalised_level, "propagate": False},
+            "uvicorn.access": {"handlers": ["default"], "level": normalised_level, "propagate": False},
+            "apscheduler": {"handlers": ["default"], "level": normalised_level, "propagate": False},
         },
-        "root": {"handlers": ["default"], "level": level},
+        "root": {"handlers": ["default"], "level": normalised_level},
     }
 
     logging.config.dictConfig(logging_config)
