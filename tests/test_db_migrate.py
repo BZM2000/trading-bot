@@ -59,7 +59,7 @@ def test_initial_schema_enum_creation_disables_recreate(monkeypatch):
     fake_op = FakeOp()
     monkeypatch.setattr(module, "op", fake_op)
 
-    real_enum_cls = module.sa.Enum
+    real_enum_cls = module.postgresql.ENUM
 
     class TrackingEnum(real_enum_cls):
         instances: list["TrackingEnum"] = []
@@ -74,7 +74,7 @@ def test_initial_schema_enum_creation_disables_recreate(monkeypatch):
             # Skip the real DDL to keep the test self-contained.
             return None
 
-    monkeypatch.setattr(module.sa, "Enum", TrackingEnum)
+    monkeypatch.setattr(module.postgresql, "ENUM", TrackingEnum)
 
     module.upgrade()
 

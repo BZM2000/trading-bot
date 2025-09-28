@@ -7,6 +7,7 @@ Create Date: 2024-08-01 00:00:00
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "20240801_0001"
@@ -16,14 +17,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    run_kind_enum = sa.Enum("daily", "2h", "5m", "manual", name="run_kind")
-    run_status_enum = sa.Enum("running", "success", "failed", name="run_status")
-    order_side_enum = sa.Enum("BUY", "SELL", name="order_side")
-    order_status_enum = sa.Enum(
+    run_kind_enum = postgresql.ENUM("daily", "2h", "5m", "manual", name="run_kind")
+    run_status_enum = postgresql.ENUM("running", "success", "failed", name="run_status")
+    order_side_enum = postgresql.ENUM("BUY", "SELL", name="order_side")
+    order_status_enum = postgresql.ENUM(
         "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="order_status"
     )
-    open_order_side_enum = sa.Enum("BUY", "SELL", name="open_order_side")
-    open_order_status_enum = sa.Enum(
+    open_order_side_enum = postgresql.ENUM("BUY", "SELL", name="open_order_side")
+    open_order_status_enum = postgresql.ENUM(
         "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="open_order_status"
     )
 
@@ -183,13 +184,19 @@ def downgrade() -> None:
     op.drop_table("run_logs")
 
     bind = op.get_bind()
-    sa.Enum("NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="open_order_status").drop(
+    postgresql.ENUM(
+        "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="open_order_status"
+    ).drop(
         bind, checkfirst=True
     )
-    sa.Enum("BUY", "SELL", name="open_order_side").drop(bind, checkfirst=True)
-    sa.Enum("NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="order_status").drop(
+    postgresql.ENUM("BUY", "SELL", name="open_order_side").drop(
         bind, checkfirst=True
     )
-    sa.Enum("BUY", "SELL", name="order_side").drop(bind, checkfirst=True)
-    sa.Enum("running", "success", "failed", name="run_status").drop(bind, checkfirst=True)
-    sa.Enum("daily", "2h", "5m", "manual", name="run_kind").drop(bind, checkfirst=True)
+    postgresql.ENUM(
+        "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="order_status"
+    ).drop(
+        bind, checkfirst=True
+    )
+    postgresql.ENUM("BUY", "SELL", name="order_side").drop(bind, checkfirst=True)
+    postgresql.ENUM("running", "success", "failed", name="run_status").drop(bind, checkfirst=True)
+    postgresql.ENUM("daily", "2h", "5m", "manual", name="run_kind").drop(bind, checkfirst=True)
