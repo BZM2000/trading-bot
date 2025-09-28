@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+should_start_server() {
+    if [[ -z "${RAILWAY_ENVIRONMENT:-}" ]]; then
+        return 1
+    fi
+
+    if [[ "${1:-}" != "upgrade" ]]; then
+        return 1
+    fi
+
+    if [[ "${2:-}" != "head" ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+if should_start_server "$@"; then
+    python -m alembic "$@"
+    exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+else
+    exec python -m alembic "$@"
+fi

@@ -4,6 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_HOME=/app
 
+ENV PATH="${APP_HOME}/scripts:${PATH}"
+
 WORKDIR ${APP_HOME}
 
 RUN apt-get update && \
@@ -14,6 +16,8 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
+
+RUN chmod +x scripts/alembic
 
 EXPOSE 8000
 
