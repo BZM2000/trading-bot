@@ -19,19 +19,25 @@ def upgrade() -> None:
     run_kind_enum = sa.Enum("daily", "2h", "5m", "manual", name="run_kind")
     run_status_enum = sa.Enum("running", "success", "failed", name="run_status")
     order_side_enum = sa.Enum("BUY", "SELL", name="order_side")
-    order_status_enum = sa.Enum("NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="order_status")
+    order_status_enum = sa.Enum(
+        "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="order_status"
+    )
     open_order_side_enum = sa.Enum("BUY", "SELL", name="open_order_side")
     open_order_status_enum = sa.Enum(
         "NEW", "OPEN", "FILLED", "CANCELLED", "EXPIRED", name="open_order_status"
     )
 
     bind = op.get_bind()
-    run_kind_enum.create(bind, checkfirst=True)
-    run_status_enum.create(bind, checkfirst=True)
-    order_side_enum.create(bind, checkfirst=True)
-    order_status_enum.create(bind, checkfirst=True)
-    open_order_side_enum.create(bind, checkfirst=True)
-    open_order_status_enum.create(bind, checkfirst=True)
+    for enum_type in (
+        run_kind_enum,
+        run_status_enum,
+        order_side_enum,
+        order_status_enum,
+        open_order_side_enum,
+        open_order_status_enum,
+    ):
+        enum_type.create(bind, checkfirst=True)
+        enum_type.create_type = False
 
     op.create_table(
         "run_logs",
