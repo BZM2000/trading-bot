@@ -19,7 +19,8 @@ should_start_server() {
 
 if should_start_server "$@"; then
     python3 -m alembic "$@"
-    exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+    port="${RAILWAY_SERVICE_PORT:-${PORT:-8000}}"
+    exec uvicorn app.main:app --host 0.0.0.0 --port "${port}"
 else
     exec python3 -m alembic "$@"
 fi
