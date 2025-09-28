@@ -24,5 +24,5 @@ def scrub_url(database_url: str) -> str:
 
     if "@" not in database_url:
         return database_url
-    prefix, suffix = database_url.split("@", 1)
+    _, suffix = database_url.split("@", 1)
     return "***@" + suffix
