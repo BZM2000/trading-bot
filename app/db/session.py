@@ -2,24 +2,29 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import Settings, get_settings
+if TYPE_CHECKING:
+    from app.config import Settings
 
 _ENGINE: Engine | None = None
 _SESSION_FACTORY: sessionmaker[Session] | None = None
 
 
-def get_engine(settings: Settings | None = None) -> Engine:
+def get_engine(settings: "Settings" | None = None) -> Engine:
     global _ENGINE
 
     if _ENGINE is not None:
         return _ENGINE
 
-    settings = settings or get_settings()
+    if settings is None:
+        from app.config import get_settings
+
+        settings = get_settings()
     database_url = settings.database_url
     create_kwargs = {"future": True, "pool_pre_ping": True}
     if database_url.startswith("sqlite"):
@@ -28,7 +33,7 @@ def get_engine(settings: Settings | None = None) -> Engine:
     return _ENGINE
 
 
-def get_session_factory(settings: Settings | None = None) -> sessionmaker[Session]:
+def get_session_factory(settings: "Settings" | None = None) -> sessionmaker[Session]:
     global _SESSION_FACTORY
 
     if _SESSION_FACTORY is not None:
@@ -40,7 +45,7 @@ def get_session_factory(settings: Settings | None = None) -> sessionmaker[Sessio
 
 
 @contextmanager
-def session_scope(settings: Settings | None = None) -> Generator[Session, None, None]:
+def session_scope(settings: "Settings" | None = None) -> Generator[Session, None, None]:
     factory = get_session_factory(settings)
     session = factory()
     try:
