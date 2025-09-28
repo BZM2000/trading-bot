@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import time
@@ -9,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from app.config import Settings, get_settings
 
@@ -62,6 +65,7 @@ class CoinbaseClient:
         *,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
+        signing_algorithm: Optional[str] = None,
         settings: Optional[Settings] = None,
         base_url: str = COINBASE_API_BASE,
         timeout: float = 15.0,
@@ -70,9 +74,13 @@ class CoinbaseClient:
         settings = settings or get_settings()
         self.api_key = api_key or settings.coinbase_api_key
         self.api_secret = api_secret or settings.coinbase_api_secret
+        self.signing_algorithm = (signing_algorithm or settings.coinbase_signing_algorithm).lower()
         self.base_url = base_url.rstrip("/")
         if not self.api_key or not self.api_secret:
             raise ValueError("Coinbase API credentials are not configured")
+        self._secret_bytes = self._decode_secret(self.api_secret)
+        self._ed25519_private_key: ed25519.Ed25519PrivateKey | None = None
+        self._ecdsa_private_key: ec.EllipticCurvePrivateKey | None = None
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
 
@@ -199,6 +207,53 @@ class CoinbaseClient:
             params["cursor"] = cursor
         return await self._request("GET", "/api/v3/brokerage/accounts", params=params)
 
+    def _decode_secret(self, secret: str) -> bytes:
+        try:
+            return base64.b64decode(secret)
+        except (binascii.Error, ValueError):
+            return secret.encode("utf-8")
+
+    def _get_ed25519_private_key(self) -> ed25519.Ed25519PrivateKey:
+        if self._ed25519_private_key is None:
+            key_bytes = self._secret_bytes
+            if len(key_bytes) == 64:
+                key_bytes = key_bytes[:32]
+            if len(key_bytes) != 32:
+                raise ValueError("Ed25519 private key must be 32 or 64 bytes")
+            self._ed25519_private_key = ed25519.Ed25519PrivateKey.from_private_bytes(key_bytes)
+        return self._ed25519_private_key
+
+    def _get_ecdsa_private_key(self) -> ec.EllipticCurvePrivateKey:
+        if self._ecdsa_private_key is None:
+            secret = self._secret_bytes
+            for loader in (serialization.load_pem_private_key, serialization.load_der_private_key):
+                try:
+                    key = loader(secret, password=None)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(key, ec.EllipticCurvePrivateKey):
+                    self._ecdsa_private_key = key
+                    break
+            if self._ecdsa_private_key is None and len(secret) == 32:
+                scalar = int.from_bytes(secret, "big")
+                self._ecdsa_private_key = ec.derive_private_key(scalar, ec.SECP256K1())
+            if self._ecdsa_private_key is None:
+                raise ValueError("Unable to parse ECDSA private key for Coinbase signing")
+        return self._ecdsa_private_key
+
+    def _sign_message(self, message: str) -> str:
+        payload = message.encode("utf-8")
+        match self.signing_algorithm:
+            case "ed25519":
+                signature = self._get_ed25519_private_key().sign(payload)
+            case "ecdsa":
+                signature = self._get_ecdsa_private_key().sign(payload, ec.ECDSA(hashes.SHA256()))
+            case "hmac":
+                signature = hmac.new(self._secret_bytes, payload, hashlib.sha256).digest()
+            case _:
+                raise ValueError(f"Unsupported Coinbase signing algorithm: {self.signing_algorithm}")
+        return base64.b64encode(signature).decode()
+
     async def _request(
         self,
         method: str,
@@ -212,9 +267,7 @@ class CoinbaseClient:
         timestamp = str(int(time.time()))
         request_path = request.url.raw_path.decode()
         message = f"{timestamp}{method.upper()}{request_path}{body}"
-        secret = base64.b64decode(self.api_secret)
-        signature = hmac.new(secret, message.encode("utf-8"), hashlib.sha256).digest()
-        signature_b64 = base64.b64encode(signature).decode()
+        signature_b64 = self._sign_message(message)
 
         request.headers.update(
             {

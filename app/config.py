@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     coinbase_api_secret: Optional[str] = Field(
         default=None, validation_alias="COINBASE_API_SECRET"
     )
+    coinbase_signing_algorithm: str = Field(
+        default="ed25519", validation_alias="COINBASE_SIGNING_ALGORITHM"
+    )
     database_url: str = Field(
         default="sqlite:///./trading_bot.db", validation_alias="DATABASE_URL"
     )
@@ -97,6 +100,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "COINBASE_API_KEY and COINBASE_API_SECRET must be set when EXECUTION_ENABLED is true"
             )
+        self.coinbase_signing_algorithm = (self.coinbase_signing_algorithm or "ed25519").lower()
         return self
 
 
