@@ -256,12 +256,17 @@ class SchedulerOrchestrator:
 
     def _load_two_hour_context(self) -> tuple[list[str], list[str]]:
         with session_scope(self.settings) as session:
-            history_models = crud.get_recent_prompt_history(session, RunKind.TWO_HOURLY, limit=7)
+            history_models = crud.get_recent_prompt_history(session, RunKind.TWO_HOURLY, limit=12)
             executed_orders = crud.recent_executed_orders(
                 session,
                 hours=24,
                 product_id=self.settings.product_id,
             )
+            executed_orders = [
+                order
+                for order in executed_orders
+                if order.status in {OrderStatus.FILLED, OrderStatus.EXPIRED}
+            ]
         history = [self._format_prompt_history_entry(item.ts, item.compact_summary_500w or item.response_text) for item in history_models]
         executed_summary = [self._format_executed_order(order) for order in executed_orders]
         return history, executed_summary

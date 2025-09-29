@@ -59,7 +59,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         context.daily_plan,
         "\nRecent Model 2 outcomes (most recent first):",
         history or "(no history)",
-        "\nExecuted orders in the last 24 hours:",
+        "\nExecuted or expired orders in the last 24 hours:",
         executed or "(no executions)",
         "\nCurrent portfolio snapshot:",
         context.portfolio_snapshot,
