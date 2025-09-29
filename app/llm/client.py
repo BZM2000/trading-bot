@@ -100,7 +100,6 @@ class LLMClient:
                 {"role": "user", "content": prompts.build_model1_user_prompt(context)},
             ],
             tools=[{"type": "web_search"}],
-            temperature=0.3,
             reasoning={"effort": self.settings.openai_responses_reasoning_m1},
         )
         self.usage.add_response(response)
@@ -116,7 +115,6 @@ class LLMClient:
                 {"role": "user", "content": prompts.build_model2_user_prompt(context)},
             ],
             tools=[{"type": "web_search"}],
-            temperature=0.2,
             reasoning={"effort": self.settings.openai_responses_reasoning_m2},
         )
         self.usage.add_response(response)
@@ -140,7 +138,6 @@ class LLMClient:
                 {"role": "user", "content": prompts.build_model3_user_prompt(context)},
             ],
             response_format=response_format,
-            temperature=0,
             reasoning={"effort": self.settings.openai_responses_reasoning_m3},
         )
         self.usage.add_response(response)
@@ -157,7 +154,6 @@ class LLMClient:
                 {"role": "system", "content": prompts.SUMMARISER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
             reasoning={"effort": self.settings.openai_responses_reasoning_summariser},
         )
         self.usage.add_response(response)
