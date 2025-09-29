@@ -73,6 +73,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
         "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
         "- Ensure BUY limits are at least the minimum distance below the current mid and SELL limits at least the minimum distance above it.",
+        "- When a plan level violates the distance or balance rules, adjust it to the nearest allowed price or drop the order entirely.",
         "If any constraint prevents an order, explain why and omit that side.",
     ]
     return "\n".join(prompt)

@@ -385,7 +385,11 @@ class SchedulerOrchestrator:
             f"Minimum size: {constraints.min_size}",
         ]
         if threshold is not None:
+            max_buy = mid_price - threshold
+            min_sell = mid_price + threshold
             parts.append(f"Distance at current mid: {threshold}")
+            parts.append(f"Max BUY limit: ≤ {max_buy}")
+            parts.append(f"Min SELL limit: ≥ {min_sell}")
         return ", ".join(parts)
 
     def _format_market_snapshot(self, snapshot) -> str:
