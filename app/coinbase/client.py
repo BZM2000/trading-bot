@@ -178,11 +178,33 @@ class CoinbaseClient:
         order_status: Optional[list[str]] = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        statuses = [status.upper() for status in order_status] if order_status else None
+        if statuses and "OPEN" in statuses and len(statuses) > 1:
+            non_open = [status for status in statuses if status != "OPEN"]
+            combined: list[dict[str, Any]] = []
+            combined.extend(
+                await self.list_orders(product_id=product_id, order_status=["OPEN"], limit=limit)
+            )
+            if non_open:
+                combined.extend(
+                    await self.list_orders(product_id=product_id, order_status=non_open, limit=limit)
+                )
+            deduped: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for order in combined:
+                order_id = order.get("order_id")
+                if order_id and order_id in seen:
+                    continue
+                if order_id:
+                    seen.add(order_id)
+                deduped.append(order)
+            return deduped
+
         params: dict[str, Any] = {"limit": limit}
         if product_id:
             params["product_id"] = product_id
-        if order_status:
-            params["order_status"] = list(order_status)
+        if statuses:
+            params["order_status"] = statuses
         payload = await self._request("GET", "/api/v3/brokerage/orders/historical/batch", params=params)
         return payload.get("orders", [])
 
