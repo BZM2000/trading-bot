@@ -6,7 +6,7 @@ from typing import Iterable
 
 MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating up to two actionable limit orders for ETH-USDC. Respect inventory, market context, and constraints from the daily plan. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating up to two actionable limit orders for ETH-USDC. Respect inventory, market context, and constraints from the daily plan. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
 
 MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Do not invent orders."""
 
@@ -74,6 +74,8 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
         "- Ensure BUY limits are at least the minimum distance below the current mid and SELL limits at least the minimum distance above it.",
         "- When a plan level violates the distance or balance rules, adjust it to the nearest allowed price or drop the order entirely.",
+        "- Account for 0.5% trading fees: avoid trades whose probable reward after fees is negligible (≈1% gross ≈ break-even).",
+        "- Every order must clear the 10 USDC notional minimum; resize or skip if that conflicts with balances or risk limits.",
         "If any constraint prevents an order, explain why and omit that side.",
     ]
     return "\n".join(prompt)

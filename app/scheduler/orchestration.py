@@ -21,6 +21,8 @@ from app.llm.usage import UsageTracker
 
 logger = logging.getLogger("scheduler.orchestrator")
 
+MIN_ORDER_NOTIONAL_USDC = Decimal("10")
+
 
 
 
@@ -390,6 +392,7 @@ class SchedulerOrchestrator:
             parts.append(f"Distance at current mid: {threshold}")
             parts.append(f"Max BUY limit: ≤ {max_buy}")
             parts.append(f"Min SELL limit: ≥ {min_sell}")
+        parts.append(f"Min order notional: ≥ {MIN_ORDER_NOTIONAL_USDC} USDC")
         return ", ".join(parts)
 
     def _format_market_snapshot(self, snapshot) -> str:
