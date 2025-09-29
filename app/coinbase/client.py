@@ -145,7 +145,7 @@ class CoinbaseClient:
         for entry in payload.get("candles", []):
             candles.append(
                 Candle(
-                    start=datetime.fromtimestamp(entry["start"] / 1000, tz=timezone.utc),
+                    start=self._parse_timestamp(entry.get("start")),
                     low=float(entry["low"]),
                     high=float(entry["high"]),
                     open=float(entry["open"]),
@@ -217,13 +217,13 @@ class CoinbaseClient:
         if isinstance(value, datetime):
             return value.astimezone(timezone.utc)
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            return self._timestamp_from_numeric(float(value))
         if isinstance(value, str):
             text = value.strip()
             if not text:
                 raise ValueError("Timestamp value is empty")
             if text.isdigit():
-                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+                return self._timestamp_from_numeric(float(text))
             try:
                 if text.endswith("Z"):
                     text = text[:-1] + "+00:00"
@@ -231,10 +231,16 @@ class CoinbaseClient:
             except ValueError:
                 pass
             try:
-                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+                return self._timestamp_from_numeric(float(text))
             except ValueError as exc:
                 raise ValueError(f"Unsupported timestamp format: {value!r}") from exc
         raise ValueError(f"Unsupported timestamp type: {type(value)!r}")
+
+    def _timestamp_from_numeric(self, value: float) -> datetime:
+        # Coinbase occasionally returns epoch values in milliseconds. Normalise if needed.
+        if value > 1e12:  # approx. 2001-09-09 in milliseconds
+            value /= 1000.0
+        return datetime.fromtimestamp(value, tz=timezone.utc)
 
     def _get_ed25519_private_key(self) -> ed25519.Ed25519PrivateKey:
         if self._ed25519_private_key is None:
