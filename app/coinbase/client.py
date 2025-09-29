@@ -304,7 +304,7 @@ class CoinbaseClient:
         """Construct a JWT token for Advanced Trade REST authentication."""
 
         host = url.host or "api.coinbase.com"
-        path = url.raw_path.decode()
+        path = url.path
         now = int(time.time())
         uri = f"{method.upper()} {host}{path}"
 
