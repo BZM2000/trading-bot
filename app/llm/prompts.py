@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 
-MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance."""
+MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for a 0.5% round-trip trading fee, highlighting only edges that clear this hurdle."""
 
 MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC limit order per run. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours, so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
 
@@ -47,6 +47,7 @@ def build_model1_user_prompt(context: Model1Context) -> str:
         "\nExecuted orders in the last 7 days:",
         executed or "(no executions)",
         "\nInstructions: produce today's 24-hour ETH-USDC plan.",
+        "Explicitly factor in the 0.5% round-trip trading fee when setting targets, sizing, and risk tolerances.",
     ]
     return "\n".join(prompt)
 
