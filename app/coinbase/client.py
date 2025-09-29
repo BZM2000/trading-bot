@@ -99,7 +99,7 @@ class CoinbaseClient:
         if not payload.get("pricebooks"):
             raise CoinbaseAPIError(404, payload)
         data = payload["pricebooks"][0]
-        ts = datetime.fromtimestamp(float(data["time"]), tz=timezone.utc)
+        ts = self._parse_timestamp(data.get("time"))
         return BestBidAsk(
             product_id=data["product_id"],
             best_bid=data["bids"][0]["price"] if data["bids"] else data.get("price", "0"),
@@ -212,6 +212,29 @@ class CoinbaseClient:
             return base64.b64decode(secret)
         except (binascii.Error, ValueError):
             return secret.encode("utf-8")
+
+    def _parse_timestamp(self, value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError("Timestamp value is empty")
+            if text.isdigit():
+                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+            try:
+                if text.endswith("Z"):
+                    text = text[:-1] + "+00:00"
+                return datetime.fromisoformat(text).astimezone(timezone.utc)
+            except ValueError:
+                pass
+            try:
+                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+            except ValueError as exc:
+                raise ValueError(f"Unsupported timestamp format: {value!r}") from exc
+        raise ValueError(f"Unsupported timestamp type: {type(value)!r}")
 
     def _get_ed25519_private_key(self) -> ed25519.Ed25519PrivateKey:
         if self._ed25519_private_key is None:
