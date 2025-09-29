@@ -289,14 +289,14 @@ class CoinbaseClient:
                 if len(secret) == 32:
                     scalar = int.from_bytes(secret, "big")
                     try:
-                        self._ecdsa_private_key = ec.derive_private_key(scalar, ec.SECP256K1())
+                        self._ecdsa_private_key = ec.derive_private_key(scalar, ec.SECP256R1())
                     except ValueError:
                         self._ecdsa_private_key = None
                     else:
                         break
             if self._ecdsa_private_key is None:
                 raise ValueError(
-                    "Unable to parse ECDSA private key for Coinbase signing. Provide a PEM/DER-encoded key, 32-byte base64, or 32-byte hex value."
+                    "Unable to parse ECDSA private key for Coinbase signing. Provide a PEM/DER-encoded key, 32-byte base64, or 32-byte hex value encoded for the P-256 curve."
                 )
         return self._ecdsa_private_key
 
