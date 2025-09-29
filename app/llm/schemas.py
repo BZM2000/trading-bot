@@ -4,13 +4,14 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.coinbase.exec import PlannedOrder
 from app.db.models import OrderSide
 
 
 class Model3Order(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     side: Literal["BUY", "SELL"] = Field(description="Order side")
     limit_price: Decimal = Field(gt=Decimal("0"), description="Limit price in quote currency")
     base_size: Decimal = Field(gt=Decimal("0"), description="Order size in base currency")
@@ -19,6 +20,7 @@ class Model3Order(BaseModel):
 
 
 class Model3Response(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     orders: list[Model3Order] = Field(default_factory=list, max_length=2)
     warnings: Optional[str] = Field(default=None, description="Any validation notes")
 
