@@ -12,7 +12,7 @@ from app.coinbase import CoinbaseClient, ExecutionService, MarketService, Planne
 from app.config import Settings, get_settings
 from app.db import RunKind, RunStatus, session_scope
 from app.db import crud
-from app.db.models import OrderSide, RunLog
+from app.db.models import OrderSide, OrderStatus, RunLog
 from app.llm import LLMClient, LLMResult, Model1Context, Model2Context, Model3Context, prompts
 from app.llm.schemas import Model3Response
 from app.llm.summariser import summarise_to_500_words
