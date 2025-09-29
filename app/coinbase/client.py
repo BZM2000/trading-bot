@@ -182,7 +182,7 @@ class CoinbaseClient:
         if product_id:
             params["product_id"] = product_id
         if order_status:
-            params["order_status"] = ",".join(order_status)
+            params["order_status"] = list(order_status)
         payload = await self._request("GET", "/api/v3/brokerage/orders/historical/batch", params=params)
         return payload.get("orders", [])
 
