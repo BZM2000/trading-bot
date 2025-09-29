@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
-import hmac
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 import httpx
-from cryptography.hazmat.primitives import hashes, serialization
+import jwt
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from app.config import Settings, get_settings
@@ -300,18 +300,36 @@ class CoinbaseClient:
                 )
         return self._ecdsa_private_key
 
-    def _sign_message(self, message: str) -> str:
-        payload = message.encode("utf-8")
+    def _build_rest_jwt(self, method: str, url: httpx.URL) -> str:
+        """Construct a JWT token for Advanced Trade REST authentication."""
+
+        host = url.host or "api.coinbase.com"
+        path = url.raw_path.decode()
+        now = int(time.time())
+        uri = f"{method.upper()} {host}{path}"
+
+        headers = {"kid": self.api_key, "nonce": secrets.token_hex(16)}
+        payload = {
+            "sub": self.api_key,
+            "iss": "cdp",
+            "nbf": now,
+            "exp": now + 120,
+            "uri": uri,
+        }
+
         match self.signing_algorithm:
-            case "ed25519":
-                signature = self._get_ed25519_private_key().sign(payload)
             case "ecdsa":
-                signature = self._get_ecdsa_private_key().sign(payload, ec.ECDSA(hashes.SHA256()))
-            case "hmac":
-                signature = hmac.new(self._secret_bytes, payload, hashlib.sha256).digest()
+                private_key = self._get_ecdsa_private_key()
+                algorithm = "ES256"
+            case "ed25519":
+                private_key = self._get_ed25519_private_key()
+                algorithm = "EdDSA"
             case _:
-                raise ValueError(f"Unsupported Coinbase signing algorithm: {self.signing_algorithm}")
-        return base64.b64encode(signature).decode()
+                raise ValueError(
+                    f"Unsupported signing algorithm for Coinbase JWT auth: {self.signing_algorithm}"
+                )
+
+        return jwt.encode(payload, private_key, algorithm=algorithm, headers=headers)
 
     async def _request(
         self,
@@ -322,22 +340,18 @@ class CoinbaseClient:
         json_body: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         request = self._client.build_request(method, path, params=params, json=json_body)
-        body = request.content.decode() if request.content else ""
-        timestamp = str(int(time.time()))
-        request_path = request.url.raw_path.decode()
-        message = f"{timestamp}{method.upper()}{request_path}{body}"
-        signature_b64 = self._sign_message(message)
+        if json_body and "content-type" not in request.headers:
+            request.headers["Content-Type"] = "application/json"
 
+        jwt_token = self._build_rest_jwt(method, request.url)
         request.headers.update(
             {
-                "CB-ACCESS-KEY": self.api_key,
-                "CB-ACCESS-SIGN": signature_b64,
-                "CB-ACCESS-TIMESTAMP": timestamp,
-                "CB-VERSION": "2023-10-01",
+                "Authorization": f"Bearer {jwt_token}",
+                "Accept": "application/json",
             }
         )
-        if body and "content-type" not in request.headers:
-            request.headers["Content-Type"] = "application/json"
+        for header in ("CB-ACCESS-KEY", "CB-ACCESS-SIGN", "CB-ACCESS-TIMESTAMP", "CB-VERSION"):
+            request.headers.pop(header, None)
 
         response = await self._client.send(request)
         if response.status_code >= 400:
