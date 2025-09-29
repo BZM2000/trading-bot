@@ -253,6 +253,11 @@ class CoinbaseClient:
             if candidate and candidate not in seen:
                 unique_candidates.append(candidate)
                 seen.add(candidate)
+            if b"\\n" in candidate:
+                normalised = candidate.replace(b"\\n", b"\n")
+                if normalised not in seen:
+                    unique_candidates.append(normalised)
+                    seen.add(normalised)
         return unique_candidates
 
     def _get_ecdsa_private_key(self) -> ec.EllipticCurvePrivateKey:
