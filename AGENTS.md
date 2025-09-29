@@ -1,19 +1,24 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-FastAPI boots from `app/main.py`; configuration is centralised in `app/config.py`. Trading logic and Coinbase clients sit under `app/coinbase/`, while LLM orchestration lives in `app/llm/` (Models 1–3 plus the summariser). Persistence code resides in `app/db/` with SQLAlchemy models, session helpers, and Alembic migrations inside `app/db/migrations/versions`. Scheduler jobs and HTMX dashboard routes share the `app/scheduler/` and `app/dashboard/` packages. Tests mirror this layout inside `tests/`.
+The entrypoint is `app/main.py`, which wires FastAPI, the APScheduler orchestrator, and the HTMX dashboard. Key packages are `app/coinbase` (Advanced Trade client), `app/llm` (multi-step prompts), `app/scheduler` (jobs and orchestration), `app/db` (SQLAlchemy models, sessions, Alembic migrations under `app/db/migrations`), and `app/dashboard` (templates and routes). Tests mirror these modules in `tests/`. Root assets (`requirements.txt`, `pytest.ini`, `Dockerfile`) support local and container flows, with Alembic helpers under `scripts/alembic`.
 
-## Build, Test & Development Commands
-Create a virtualenv with `python -m venv .venv && source .venv/bin/activate`, then install dependencies via `pip install -r requirements.txt`. Run `uvicorn app.main:app --reload` for the API, dashboard, and background scheduler. Keep the schema current with `alembic -c alembic.ini upgrade head`, and generate revisions using `alembic revision --autogenerate -m "short description"`. Execute `pytest` (optionally `-k` or `-vv`) before every push.
+## Build, Test, and Development Commands
+- `python -m venv .venv && source .venv/bin/activate` — set up the Python 3.11 environment.
+- `pip install -r requirements.txt` — install runtime and test dependencies.
+- `uvicorn app.main:app --reload` — start the API, dashboard, and scheduler; auto-migrations run when enabled.
+- `alembic -c alembic.ini upgrade head` — apply migrations manually if auto-run is disabled.
+- `pytest` — execute the unit suite; keep `LLM_STUB_MODE=true` to avoid live OpenAI calls.
+- `docker build -t trading-bot .` then `docker run --env-file .env -p 8000:8000 trading-bot` — optional container workflow.
 
 ## Coding Style & Naming Conventions
-Stick to PEP 8 with four-space indentation and type hints on public functions. Use `snake_case` for functions, variables, and Alembic revisions, `PascalCase` for SQLAlchemy and Pydantic models, and `UPPER_CASE` for constants such as product IDs. Align response schemas with Coinbase payloads, and add concise module docstrings when behaviour is non-obvious. No auto-formatter is enforced, so rely on `pytest --collect-only` or `python -m compileall app tests` to catch syntax slips.
+Follow PEP 8 with 4-space indents and explicit type hints, matching `app/main.py` and `app/config.py`. Keep module and function names `snake_case`, classes `PascalCase`, and extend existing Pydantic models for new settings or payloads. Prefer absolute imports via the `app.` package and use `app.logging` utilities to keep JSON logs consistent.
 
 ## Testing Guidelines
-Unit tests belong in `tests/test_*.py` with descriptive method names. Stub Coinbase and OpenAI calls by setting `LLM_STUB_MODE=true` and `EXECUTION_ENABLED=false` in `.env`; this makes integration tests deterministic and removes the need for live keys. Prefer fixture builders over hard-coded JSON and add database assertions when migrations introduce new fields.
+Tests live in `tests/test_*.py` and use pytest. Mirror new modules with targeted test files that cover validation, scheduler filters, and database helpers. Default `.env` should set `LLM_STUB_MODE=true` and `EXECUTION_ENABLED=false` so the suite runs offline. When migrations adjust schemas, update `tests/test_db_migrate.py` accordingly.
 
 ## Commit & Pull Request Guidelines
-Follow Conventional Commit prefixes (`feat:`, `fix:`, `chore:`) written in the imperative voice. Include migration files alongside related model changes, and note any new environment variables or scheduler endpoints in the description. Pull requests should document manual test results and, when dashboard templates change, attach updated screenshots or terminal captures.
+History favours conventional commits (`fix: normalise candle timestamps`). Write imperative subjects under 72 characters and keep each commit scoped. Pull requests should include a brief behaviour summary, linked issues, configuration or migration callouts, screenshots for dashboard changes, and test evidence (`pytest`, manual `/force/*` trigger). Highlight follow-up work for reviewer awareness.
 
-## Environment & Safety Checks
-Copy `.env.example` to `.env` and fill the OpenAI and Coinbase secrets plus `DATABASE_URL`. Locally you can rely on the bundled SQLite fallback, but Railway deployments must use the managed Postgres URL. `AUTO_MIGRATE_ON_START=true` runs Alembic on startup—leave it enabled unless you manage migrations manually. Portfolio prompts already ignore non-ETH/USDC balances, keeping LLM context focused; verify this behaviour after modifying account parsing. Scheduler endpoints at `POST /force/daily` and `POST /force/2h` help trigger runs during QA.
+## Security & Configuration Tips
+Secrets belong in `.env` copied from `.env.example`; never commit them. Use `app.db.url_normaliser` to coerce database URLs and prefer the default SQLite database for local work. Keep `EXECUTION_ENABLED=false` until you are ready for live orders, rotate Coinbase credentials when enabling it, and document new env vars or scheduler jobs in the README.

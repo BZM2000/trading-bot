@@ -124,12 +124,13 @@ class LLMClient:
         if self._stub_mode:
             return Model3Response.model_validate({"orders": []})
 
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {
+        text_format = {
+            "format": {
+                "type": "json_schema",
                 "name": "model3_response",
                 "schema": MODEL3_JSON_SCHEMA,
-            },
+                "strict": True,
+            }
         }
         response = await self._client.responses.create(
             model=self.settings.openai_responses_model_m3,
@@ -137,7 +138,7 @@ class LLMClient:
                 {"role": "system", "content": prompts.MODEL_3_SYSTEM_PROMPT},
                 {"role": "user", "content": prompts.build_model3_user_prompt(context)},
             ],
-            response_format=response_format,
+            text=text_format,
             reasoning={"effort": self.settings.openai_responses_reasoning_m3},
         )
         self.usage.add_response(response)

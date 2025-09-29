@@ -61,7 +61,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         executed or "(no executions)",
         "\nCurrent portfolio snapshot:",
         context.portfolio_snapshot,
-        "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL).",
+        "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL). Respect the current balances: BUY sizing must stay within available USDC and SELL sizing must stay within available ETH.",
     ]
     return "\n".join(prompt)
 
