@@ -21,7 +21,7 @@ class Model3Order(BaseModel):
 
 class Model3Response(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    orders: list[Model3Order] = Field(default_factory=list, max_length=2)
+    orders: list[Model3Order] = Field(default_factory=list, max_length=1)
     warnings: Optional[str] = Field(default=None, description="Any validation notes")
 
     @field_validator("orders")

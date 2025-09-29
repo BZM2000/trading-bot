@@ -63,12 +63,12 @@ class ExecutionService:
     def _validate_orders(self, planned_orders: Sequence[PlannedOrder], mid_price: Decimal) -> list[PlannedOrder]:
         if len(planned_orders) == 0:
             return []
-        if len(planned_orders) > 2:
-            raise ValueError("At most two planned orders are allowed")
+        if len(planned_orders) > 1:
+            raise ValueError("At most one planned order is allowed")
 
         sides = {order.side for order in planned_orders}
         if len(planned_orders) != len(sides):
-            raise ValueError("Duplicate sides detected in planned orders")
+            raise ValueError("Duplicate order sides detected")
 
         validated: list[PlannedOrder] = []
         for order in planned_orders:

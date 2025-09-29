@@ -6,9 +6,9 @@ from typing import Iterable
 
 MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating up to two actionable limit orders for ETH-USDC. Respect inventory, market context, and constraints from the daily plan. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC limit order per run. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours, so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
 
-MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Do not invent orders."""
+MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Return at most one order and mark it for a 2-hour GTD window. Do not invent orders."""
 
 SUMMARISER_SYSTEM_PROMPT = """Summarize the provided trading plan into at most 500 words while preserving key decisions, rationales, and risk notes."""
 
@@ -67,7 +67,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         context.market_snapshot,
         "\nExecution constraints:",
         context.constraint_notes,
-        "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL).",
+        "\nInstructions: propose exactly one ETH-USDC limit order (BUY or SELL). Pick the single highest-quality idea for the next 2 hours.",
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
@@ -76,6 +76,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "- When a plan level violates the distance or balance rules, adjust it to the nearest allowed price or drop the order entirely.",
         "- Account for 0.5% trading fees: avoid trades whose probable reward after fees is negligible (≈1% gross ≈ break-even).",
         "- Every order must clear the 10 USDC notional minimum; resize or skip if that conflicts with balances or risk limits.",
+        "- State the 2-hour GTD window explicitly and skip ideas unlikely to trigger within it.",
         "If any constraint prevents an order, explain why and omit that side.",
     ]
     return "\n".join(prompt)
