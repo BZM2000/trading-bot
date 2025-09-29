@@ -231,12 +231,29 @@ class CoinbaseClient:
             if len(secret) in (64, 65):
                 candidates.append(secret[:32])
 
-        raw_secret = (self.api_secret or "").strip()
+        raw_secret = self.api_secret or ""
         if raw_secret:
-            hex_candidate = raw_secret
-            if raw_secret.lower().startswith("0x"):
-                hex_candidate = raw_secret[2:]
-            if len(hex_candidate) % 2 == 0:
+            cleaned_secret = raw_secret.strip()
+            if (
+                len(cleaned_secret) >= 2
+                and cleaned_secret[0] == cleaned_secret[-1]
+                and cleaned_secret[0] in {'"', '\''}
+            ):
+                cleaned_secret = cleaned_secret[1:-1]
+
+            if cleaned_secret:
+                literal_bytes = cleaned_secret.encode("utf-8")
+                candidates.append(literal_bytes)
+
+                normalised_str = cleaned_secret.replace("\\r", "\r").replace("\\n", "\n")
+                if normalised_str != cleaned_secret:
+                    candidates.append(normalised_str.encode("utf-8"))
+
+            hex_candidate = cleaned_secret
+            if hex_candidate.lower().startswith("0x"):
+                hex_candidate = hex_candidate[2:]
+            hex_candidate = hex_candidate.replace(" ", "")
+            if hex_candidate and len(hex_candidate) % 2 == 0:
                 try:
                     decoded = binascii.unhexlify(hex_candidate)
                 except (binascii.Error, ValueError):
@@ -253,11 +270,6 @@ class CoinbaseClient:
             if candidate and candidate not in seen:
                 unique_candidates.append(candidate)
                 seen.add(candidate)
-            if b"\\n" in candidate:
-                normalised = candidate.replace(b"\\n", b"\n")
-                if normalised not in seen:
-                    unique_candidates.append(normalised)
-                    seen.add(normalised)
         return unique_candidates
 
     def _get_ecdsa_private_key(self) -> ec.EllipticCurvePrivateKey:
