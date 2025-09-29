@@ -26,6 +26,8 @@ class Model2Context:
     recent_two_hour_history: Iterable[str]
     executed_orders_summary: Iterable[str]
     portfolio_snapshot: str
+    market_snapshot: str
+    constraint_notes: str
 
 
 @dataclass(slots=True)
@@ -61,12 +63,17 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         executed or "(no executions)",
         "\nCurrent portfolio snapshot:",
         context.portfolio_snapshot,
+        "\nLive market snapshot:",
+        context.market_snapshot,
+        "\nExecution constraints:",
+        context.constraint_notes,
         "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL).",
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
         "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
-        "If either constraint prevents an order, explain why and leave that side out.",
+        "- Ensure BUY limits are at least the minimum distance below the current mid and SELL limits at least the minimum distance above it.",
+        "If any constraint prevents an order, explain why and omit that side.",
     ]
     return "\n".join(prompt)
 

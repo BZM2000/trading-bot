@@ -100,20 +100,27 @@ class SchedulerOrchestrator:
             execution = ExecutionService(cb_client, product_id=self.settings.product_id, constraints=constraints)
 
             async with LLMClient(settings=self.settings, usage_tracker=usage) as llm:
+                additional_validation_notes = ""
                 for attempt in (1, 2):
                     market_snapshot = await market_service.current_snapshot(self.settings.product_id)
                     self._record_price_snapshot(market_snapshot)
 
                     portfolio_balances = await self._capture_portfolio_snapshot(cb_client)
+                    market_snapshot_text = self._format_market_snapshot(market_snapshot)
+                    constraints_text = self._format_constraints(constraints, market_snapshot.mid)
                     model2_context = Model2Context(
                         daily_plan=daily_plan_text,
                         recent_two_hour_history=history,
                         executed_orders_summary=executed_summary,
                         portfolio_snapshot=self._format_portfolio_snapshot(portfolio_balances),
+                        market_snapshot=market_snapshot_text,
+                        constraint_notes=constraints_text,
                     )
                     model2_result = await llm.run_model2(model2_context)
 
                     validation_notes = self._build_validation_notes(constraints, market_snapshot.mid)
+                    if additional_validation_notes:
+                        validation_notes = f"{validation_notes} {additional_validation_notes}".strip()
                     model3_context = Model3Context(model2_output=model2_result.text, validation_notes=validation_notes)
                     model3_response: Model3Response = await llm.run_model3(model3_context)
                     planned_orders = model3_response.to_planned_orders()
@@ -136,7 +143,16 @@ class SchedulerOrchestrator:
 
                     placed_order_responses = []
                     if planned_orders and self.settings.execution_enabled:
-                        placed_order_responses = await execution.place_orders(planned_orders, mid_price=market_snapshot.mid)
+                        try:
+                            placed_order_responses = await execution.place_orders(planned_orders, mid_price=market_snapshot.mid)
+                        except ValueError as exc:
+                            logger.warning("Order validation failed: %s", exc)
+                            if attempt == 1:
+                                timestamp = datetime.now(timezone.utc).isoformat()
+                                history.insert(0, f"{timestamp}Z :: Last attempt rejected: {exc}")
+                                additional_validation_notes = f"Previous attempt rejected: {exc}."
+                                continue
+                            raise
                     with session_scope(self.settings) as session:
                         sync_result = await execution.sync_open_and_fills(session)
                     self._finish_run(
@@ -358,6 +374,19 @@ class SchedulerOrchestrator:
                 f"{currency}: available={entry.get('available')} hold={entry.get('hold')} total={entry.get('balance')}"
             )
         return "\n".join(lines) if lines else "(no balances for target product)"
+
+    def _format_constraints(self, constraints: ProductConstraints, mid_price) -> str:
+        threshold = mid_price * constraints.min_distance_pct if mid_price else None
+        distance_pct = constraints.min_distance_pct * Decimal(100)
+        parts = [
+            f"Min distance: {distance_pct:.4f}%",
+            f"Price increment: {constraints.price_increment}",
+            f"Size increment: {constraints.size_increment}",
+            f"Minimum size: {constraints.min_size}",
+        ]
+        if threshold is not None:
+            parts.append(f"Distance at current mid: {threshold}")
+        return ", ".join(parts)
 
     def _format_market_snapshot(self, snapshot) -> str:
         parts = [
