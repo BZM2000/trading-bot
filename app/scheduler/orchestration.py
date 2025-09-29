@@ -175,6 +175,7 @@ class SchedulerOrchestrator:
         usage = UsageTracker()
         run_id = self._start_run(RunKind.FIVE_MINUTE, "schedule")
         new_fills: list[str] = []
+        open_orders: list[crud.OpenOrderRecord] = []
         try:
             async with CoinbaseClient(settings=self.settings) as cb_client:
                 execution = ExecutionService(
@@ -187,6 +188,7 @@ class SchedulerOrchestrator:
                 )
                 with session_scope(self.settings) as session:
                     sync_result = await execution.sync_open_and_fills(session)
+                open_orders = sync_result.open_orders
                 new_fills = [
                     record.order_id
                     for record in sync_result.executed_orders
@@ -204,8 +206,8 @@ class SchedulerOrchestrator:
             self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
             raise
 
-        if new_fills:
-            await self.run_two_hourly(triggered_by="fill")
+        if not open_orders and not self._two_hour_lock.locked():
+            await self.run_two_hourly(triggered_by="no_open_orders")
 
     def _start_run(self, kind: RunKind, triggered_by: str) -> int:
         with session_scope(self.settings) as session:

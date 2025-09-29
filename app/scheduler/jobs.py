@@ -34,13 +34,6 @@ def register_jobs(scheduler: AsyncIOScheduler, app: FastAPI) -> None:
         replace_existing=True,
     )
     scheduler.add_job(
-        two_hourly_job,
-        trigger=IntervalTrigger(hours=2),
-        kwargs={"app": app},
-        id="two_hourly_plan",
-        replace_existing=True,
-    )
-    scheduler.add_job(
         fill_poller_job,
         trigger=IntervalTrigger(minutes=5),
         kwargs={"app": app},
