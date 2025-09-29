@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -46,4 +46,34 @@ class Model3Response(BaseModel):
         ]
 
 
+def _ensure_required_flags(schema: dict[str, Any]) -> None:
+    if not isinstance(schema, dict):
+        return
+
+    if schema.get("type") == "object":
+        properties = schema.get("properties", {})
+        if isinstance(properties, dict):
+            required = schema.setdefault("required", [])
+            for key, subschema in properties.items():
+                if key not in required:
+                    required.append(key)
+                _ensure_required_flags(subschema)
+
+    if schema.get("type") == "array":
+        items = schema.get("items")
+        if isinstance(items, dict):
+            _ensure_required_flags(items)
+
+    for defs_key in ("$defs", "definitions"):
+        definitions = schema.get(defs_key)
+        if isinstance(definitions, dict):
+            for subschema in definitions.values():
+                _ensure_required_flags(subschema)
+
+    if isinstance(schema.get("anyOf"), list):
+        for option in schema["anyOf"]:
+            _ensure_required_flags(option)
+
+
 MODEL3_JSON_SCHEMA = Model3Response.model_json_schema(ref_template="#/$defs/{model}")
+_ensure_required_flags(MODEL3_JSON_SCHEMA)
