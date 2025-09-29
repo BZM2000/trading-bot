@@ -36,9 +36,15 @@ def _extract_output_text(response: Any) -> str:
                 content = item
             if isinstance(content, list):
                 for part in content:
-                    text = part.get("text") if isinstance(part, dict) else None
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
                     if text:
                         chunks.append(text)
+                        continue
+                    json_payload = part.get("json")
+                    if json_payload is not None:
+                        chunks.append(json.dumps(json_payload))
             elif isinstance(content, dict):
                 text = content.get("text")
                 if text:
@@ -67,6 +73,41 @@ def _response_to_dict(response: Any) -> dict[str, Any]:
         if hasattr(response, attr):
             result[attr] = getattr(response, attr)
     return result
+
+
+def _extract_json_payload(response: Any) -> Optional[dict[str, Any]]:
+    candidates: list[Any] = []
+    for attr in ("output", "outputs"):
+        if hasattr(response, attr):
+            candidates.append(getattr(response, attr))
+    data = _response_to_dict(response)
+    for key in ("output", "outputs"):
+        value = data.get(key)
+        if value is not None:
+            candidates.append(value)
+
+    for output in candidates:
+        if not isinstance(output, list):
+            continue
+        for item in output:
+            content = item.get("content") if isinstance(item, dict) else None
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("json") is not None:
+                    payload = part.get("json")
+                    if isinstance(payload, dict):
+                        return payload
+                    if isinstance(payload, str):
+                        try:
+                            decoded = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(decoded, dict):
+                            return decoded
+    return None
 
 
 class LLMClient:
@@ -142,6 +183,9 @@ class LLMClient:
             reasoning={"effort": self.settings.openai_responses_reasoning_m3},
         )
         self.usage.add_response(response)
+        payload_json = _extract_json_payload(response)
+        if payload_json is not None:
+            return self._parse_model3_output(payload_json)
         payload_text = _extract_output_text(response)
         return self._parse_model3_output(payload_text)
 
@@ -160,7 +204,9 @@ class LLMClient:
         self.usage.add_response(response)
         return _extract_output_text(response)
 
-    def _parse_model3_output(self, raw: str) -> Model3Response:
+    def _parse_model3_output(self, raw: Any) -> Model3Response:
+        if isinstance(raw, dict):
+            return Model3Response.model_validate(raw)
         if not raw:
             return Model3Response(orders=[])
         try:

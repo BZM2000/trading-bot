@@ -6,7 +6,7 @@ from typing import Iterable
 
 MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating up to two actionable limit orders for ETH-USDC. Respect inventory, market context, and constraints from the daily plan."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating up to two actionable limit orders for ETH-USDC. Respect inventory, market context, and constraints from the daily plan. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC."""
 
 MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Do not invent orders."""
 
@@ -61,7 +61,12 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         executed or "(no executions)",
         "\nCurrent portfolio snapshot:",
         context.portfolio_snapshot,
-        "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL). Respect the current balances: BUY sizing must stay within available USDC and SELL sizing must stay within available ETH.",
+        "\nInstructions: propose up to two ETH-USDC limit orders (at most one BUY and one SELL).",
+        "Strict balance rules:",
+        "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
+        "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
+        "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
+        "If either constraint prevents an order, explain why and leave that side out.",
     ]
     return "\n".join(prompt)
 
