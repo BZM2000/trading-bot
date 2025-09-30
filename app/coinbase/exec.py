@@ -217,7 +217,7 @@ class ExecutionService:
             if config is None:
                 continue
 
-            submitted = parse_datetime(order.get("submitted_time")) or datetime.now(timezone.utc)
+            submitted = resolve_submitted_time(order)
             client_order_id = order.get("client_order_id", "")
             side = parse_side(order.get("side"))
 
@@ -381,3 +381,19 @@ def parse_decimal(value: Any) -> Optional[Decimal]:
     except Exception:
         return None
     return decimal_value
+
+
+def resolve_submitted_time(order: dict[str, Any]) -> datetime:
+    """Return the most accurate submitted timestamp available for an order."""
+
+    candidates = (
+        order.get("submitted_time"),
+        order.get("created_time"),
+        order.get("order_placed_time"),
+        order.get("last_fill_time"),
+    )
+    for candidate in candidates:
+        ts = parse_datetime(candidate)
+        if ts is not None:
+            return ts
+    return datetime.now(timezone.utc)

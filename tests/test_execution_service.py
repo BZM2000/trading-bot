@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.coinbase.exec import ExecutionService, OrderType, PlannedOrder
+from app.coinbase.exec import ExecutionService, OrderType, PlannedOrder, resolve_submitted_time
 from app.coinbase.validators import ProductConstraints
 from app.db.models import OrderSide
 
@@ -120,4 +120,32 @@ def test_market_order_validation_and_payload(execution_service: ExecutionService
     payload = execution_service._build_payload(validated[0])
     assert "market_market_ioc" in payload["order_configuration"]
     market_cfg = payload["order_configuration"]["market_market_ioc"]
-    assert market_cfg["base_size"] == "0.05"
+    assert Decimal(market_cfg["base_size"]) == Decimal("0.05")
+
+
+def test_resolve_submitted_time_uses_created_when_missing_submitted() -> None:
+    created = "2024-07-12T09:15:30Z"
+    order = {"created_time": created}
+
+    resolved = resolve_submitted_time(order)
+
+    assert resolved == datetime(2024, 7, 12, 9, 15, 30, tzinfo=timezone.utc)
+
+
+def test_resolve_submitted_time_prefers_submitted_timestamp() -> None:
+    submitted = "2024-07-12T10:00:00Z"
+    created = "2024-07-11T09:15:30Z"
+    order = {"submitted_time": submitted, "created_time": created}
+
+    resolved = resolve_submitted_time(order)
+
+    assert resolved == datetime(2024, 7, 12, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_submitted_time_uses_order_placed_when_available() -> None:
+    placed = "2024-07-10T08:30:15Z"
+    order = {"order_placed_time": placed}
+
+    resolved = resolve_submitted_time(order)
+
+    assert resolved == datetime(2024, 7, 10, 8, 30, 15, tzinfo=timezone.utc)
