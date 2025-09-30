@@ -1,6 +1,6 @@
 # Trading Bot Platform (ETH-USDC)
 
-This project implements a local-first orchestration layer for an ETH-USDC limit-order trading bot. It follows the plan in `plan.md` and provides:
+This project implements a local-first orchestration layer for an ETH-USDC limit and stop-limit trading bot. It follows the plan in `plan.md` and provides:
 
 - Automated daily, two-hourly, and five-minute jobs coordinated by APScheduler.
 - Coinbase Advanced Trade integrations for best bid/ask snapshots, product metadata, order placement, and fill synchronisation.

@@ -13,7 +13,8 @@
       <tr>
         <th>ID</th>
         <th>Side</th>
-        <th>Price</th>
+        <th>Limit</th>
+        <th>Stop</th>
         <th>Size</th>
         <th>Status</th>
         <th>Expiry</th>
@@ -25,6 +26,7 @@
         <td>{{ order.order_id }}</td>
         <td>{{ order.side.value }}</td>
         <td>{{ order.limit_price }}</td>
+        <td>{{ order.stop_price or "–" }}</td>
         <td>{{ order.base_size }}</td>
         <td>{{ order.status.value }}</td>
         <td>{{ order.end_time.strftime('%Y-%m-%d %H:%M') }} UTC</td>
@@ -43,7 +45,8 @@
       <tr>
         <th>Time</th>
         <th>Side</th>
-        <th>Price</th>
+        <th>Limit</th>
+        <th>Stop</th>
         <th>Size</th>
         <th>Status</th>
       </tr>
@@ -54,6 +57,7 @@
         <td>{{ (order.ts_filled or order.ts_submitted).strftime('%Y-%m-%d %H:%M') }} UTC</td>
         <td>{{ order.side.value }}</td>
         <td>{{ order.limit_price }}</td>
+        <td>{{ order.stop_price or "–" }}</td>
         <td>{{ order.base_size }}</td>
         <td>{{ order.status.value }}</td>
       </tr>

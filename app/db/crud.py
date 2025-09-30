@@ -45,6 +45,7 @@ class ExecutedOrderRecord:
     client_order_id: str
     end_time: datetime
     product_id: str
+    stop_price: Optional[Decimal] = None
 
 
 @dataclass(slots=True)
@@ -57,6 +58,7 @@ class OpenOrderRecord:
     client_order_id: str
     end_time: datetime
     product_id: str
+    stop_price: Optional[Decimal] = None
 
 
 @dataclass(slots=True)
@@ -196,11 +198,13 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
             order.client_order_id = record.client_order_id
             order.end_time = record.end_time
             order.product_id = record.product_id
+            order.stop_price = record.stop_price
 
             if (
                 order.status != prev_status
                 or order.filled_size != prev_filled
                 or order.ts_filled != prev_filled_time
+                or order.stop_price != record.stop_price
             ):
                 changed.add(order.order_id)
         else:
@@ -217,6 +221,7 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
                     client_order_id=record.client_order_id,
                     end_time=record.end_time,
                     product_id=record.product_id,
+                    stop_price=record.stop_price,
                 )
             )
             changed.add(record.order_id)
@@ -232,18 +237,19 @@ def replace_open_orders(session: Session, records: Sequence[OpenOrderRecord]) ->
         session.execute(delete(models.OpenOrder))
 
     for record in records:
-        session.add(
-            models.OpenOrder(
-                order_id=record.order_id,
-                side=record.side,
-                limit_price=record.limit_price,
-                base_size=record.base_size,
-                status=record.status,
-                client_order_id=record.client_order_id,
-                end_time=record.end_time,
-                product_id=record.product_id,
-            )
-        )
+                session.add(
+                    models.OpenOrder(
+                        order_id=record.order_id,
+                        side=record.side,
+                        limit_price=record.limit_price,
+                        base_size=record.base_size,
+                        status=record.status,
+                        client_order_id=record.client_order_id,
+                        end_time=record.end_time,
+                        product_id=record.product_id,
+                        stop_price=record.stop_price,
+                    )
+                )
     session.flush()
 
 

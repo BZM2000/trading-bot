@@ -63,3 +63,32 @@ def enforce_min_distance(price: Decimal, mid_price: Decimal, constraints: Produc
         raise ValueError("Buy order does not satisfy minimum distance from mid-price")
     if side == OrderSide.SELL and price - mid_price < threshold:
         raise ValueError("Sell order does not satisfy minimum distance from mid-price")
+
+
+def round_stop_price(price: Decimal, constraints: ProductConstraints, side: OrderSide) -> Decimal:
+    """Round a stop trigger price to the nearest valid increment.
+
+    For BUY stops we bias upward so that rounding never triggers earlier than
+    requested. For SELL stops we bias downward for the same reason.
+    """
+
+    increment = constraints.price_increment
+    if increment == 0:
+        return price
+    quant = price / increment
+    if side == OrderSide.BUY:
+        quant = quant.to_integral_value(rounding=ROUND_CEILING)
+    else:
+        quant = quant.to_integral_value(rounding=ROUND_FLOOR)
+    rounded = quant * increment
+    return rounded.quantize(increment)
+
+
+def enforce_stop_distance(stop_price: Decimal, mid_price: Decimal, constraints: ProductConstraints, side: OrderSide) -> None:
+    """Ensure the stop trigger sits the required distance away from the mid price."""
+
+    threshold = mid_price * constraints.min_distance_pct
+    if side == OrderSide.BUY and stop_price - mid_price < threshold:
+        raise ValueError("Buy stop does not satisfy minimum distance above mid-price")
+    if side == OrderSide.SELL and mid_price - stop_price < threshold:
+        raise ValueError("Sell stop does not satisfy minimum distance below mid-price")

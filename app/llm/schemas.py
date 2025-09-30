@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.coinbase.exec import PlannedOrder
 from app.db.models import OrderSide
@@ -16,7 +16,24 @@ class Model3Order(BaseModel):
     limit_price: Decimal = Field(gt=Decimal("0"), description="Limit price in quote currency")
     base_size: Decimal = Field(gt=Decimal("0"), description="Order size in base currency")
     post_only: bool = Field(default=True, description="Whether the order must remain maker-only")
+    order_type: Literal["limit", "stop_limit"] = Field(
+        default="limit",
+        description="Execution style: classic limit or stop-limit order",
+    )
+    stop_price: Optional[Decimal] = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="Stop trigger price in quote currency (required for stop-limit orders)",
+    )
     note: Optional[str] = Field(default=None, max_length=300, description="Short justification")
+
+    @model_validator(mode="after")
+    def validate_stop_configuration(self) -> "Model3Order":
+        if self.order_type == "stop_limit" and self.stop_price is None:
+            raise ValueError("stop_limit orders require stop_price")
+        if self.order_type == "limit" and self.stop_price is not None:
+            raise ValueError("Limit orders must omit stop_price")
+        return self
 
 
 class Model3Response(BaseModel):
@@ -39,8 +56,9 @@ class Model3Response(BaseModel):
                 side=OrderSide(order.side),
                 limit_price=order.limit_price,
                 base_size=order.base_size,
-                post_only=order.post_only,
+                post_only=order.post_only if order.order_type == "limit" else False,
                 end_time=end_time,
+                stop_price=order.stop_price,
             )
             for order in self.orders
         ]

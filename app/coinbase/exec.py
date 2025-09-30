@@ -9,7 +9,14 @@ from typing import Optional, Sequence
 from sqlalchemy.orm import Session
 
 from app.coinbase.client import CoinbaseClient
-from app.coinbase.validators import ProductConstraints, ensure_min_size, enforce_min_distance, round_price
+from app.coinbase.validators import (
+    ProductConstraints,
+    ensure_min_size,
+    enforce_min_distance,
+    enforce_stop_distance,
+    round_price,
+    round_stop_price,
+)
 from app.db import crud
 from app.db.models import OrderSide, OrderStatus
 
@@ -21,6 +28,7 @@ class PlannedOrder:
     base_size: Decimal
     end_time: datetime
     post_only: bool = True
+    stop_price: Optional[Decimal] = None
 
 
 @dataclass(slots=True)
@@ -72,35 +80,72 @@ class ExecutionService:
 
         validated: list[PlannedOrder] = []
         for order in planned_orders:
-            price = round_price(order.limit_price, self.constraints, order.side)
-            enforce_min_distance(price, mid_price, self.constraints, order.side)
             size = ensure_min_size(order.base_size, self.constraints)
+            if order.stop_price is None:
+                price = round_price(order.limit_price, self.constraints, order.side)
+                enforce_min_distance(price, mid_price, self.constraints, order.side)
+                validated.append(
+                    PlannedOrder(
+                        side=order.side,
+                        limit_price=price,
+                        base_size=size,
+                        end_time=order.end_time,
+                        post_only=order.post_only,
+                        stop_price=None,
+                    )
+                )
+                continue
+
+            stop_price = round_stop_price(order.stop_price, self.constraints, order.side)
+            limit_price = round_price(order.limit_price, self.constraints, order.side)
+            enforce_stop_distance(stop_price, mid_price, self.constraints, order.side)
+
+            if order.side == OrderSide.BUY and limit_price < stop_price:
+                raise ValueError("Buy stop-limit orders require limit price ≥ stop price")
+            if order.side == OrderSide.SELL and limit_price > stop_price:
+                raise ValueError("Sell stop-limit orders require limit price ≤ stop price")
+
             validated.append(
                 PlannedOrder(
                     side=order.side,
-                    limit_price=price,
+                    limit_price=limit_price,
                     base_size=size,
                     end_time=order.end_time,
-                    post_only=order.post_only,
+                    post_only=False,
+                    stop_price=stop_price,
                 )
             )
         return validated
 
     def _build_payload(self, order: PlannedOrder) -> dict:
         client_order_id = uuid.uuid4().hex
-        return {
+        payload = {
             "client_order_id": client_order_id,
             "product_id": self.product_id,
             "side": order.side.value,
-            "order_configuration": {
+        }
+
+        if order.stop_price is None:
+            payload["order_configuration"] = {
                 "limit_limit_gtd": {
                     "base_size": str(order.base_size),
                     "limit_price": str(order.limit_price),
                     "post_only": order.post_only,
                     "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
-            },
-        }
+            }
+        else:
+            payload["order_configuration"] = {
+                "stop_limit_stop_limit_gtd": {
+                    "base_size": str(order.base_size),
+                    "limit_price": str(order.limit_price),
+                    "stop_price": str(order.stop_price),
+                    "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "stop_direction": self._stop_direction(order),
+                }
+            }
+
+        return payload
 
     async def sync_open_and_fills(self, session: Session, *, product_id: Optional[str] = None) -> SyncResult:
         product = product_id or self.product_id
@@ -126,12 +171,13 @@ class ExecutionService:
                 continue
             status_str = (order.get("status") or order.get("order_status") or "").upper()
             status = STATUS_MAP.get(status_str, OrderStatus.NEW)
-            config = self._extract_limit_config(order)
-            if not config:
+            _config_type, config = self._extract_order_config(order)
+            if config is None:
                 continue
 
             base_size = Decimal(config.get("base_size", "0"))
             limit_price = Decimal(config.get("limit_price", "0"))
+            stop_price = Decimal(config.get("stop_price", "0")) if config.get("stop_price") else None
             submitted = parse_datetime(order.get("submitted_time")) or datetime.now(timezone.utc)
             end_time = (
                 parse_datetime(config.get("end_time"))
@@ -152,6 +198,7 @@ class ExecutionService:
                         client_order_id=client_order_id,
                         end_time=end_time,
                         product_id=product,
+                        stop_price=stop_price,
                     )
                 )
 
@@ -174,6 +221,7 @@ class ExecutionService:
                     client_order_id=client_order_id,
                     end_time=end_time,
                     product_id=product,
+                    stop_price=stop_price,
                 )
             )
 
@@ -185,11 +233,25 @@ class ExecutionService:
             changed_order_ids=changed_ids,
         )
 
-    def _extract_limit_config(self, order: dict) -> Optional[dict]:
+    def _stop_direction(self, order: PlannedOrder) -> str:
+        return "STOP_DIRECTION_STOP_UP" if order.side == OrderSide.BUY else "STOP_DIRECTION_STOP_DOWN"
+
+    def _extract_order_config(self, order: dict) -> tuple[str, Optional[dict]]:
         config = order.get("order_configuration", {})
-        limit_gtd = config.get("limit_limit_gtd")
-        limit_gtc = config.get("limit_limit_gtc")
-        return limit_gtd or limit_gtc
+        if not isinstance(config, dict):
+            return ("unknown", None)
+
+        for key in ("limit_limit_gtd", "limit_limit_gtc"):
+            value = config.get(key)
+            if value:
+                return ("limit", value)
+
+        for key in ("stop_limit_stop_limit_gtd", "stop_limit_stop_limit_gtc"):
+            value = config.get(key)
+            if value:
+                return ("stop_limit", value)
+
+        return ("unknown", None)
 
 
 def parse_datetime(value: Optional[str]) -> Optional[datetime]:

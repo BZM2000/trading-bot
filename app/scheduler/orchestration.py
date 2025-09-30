@@ -374,7 +374,10 @@ class SchedulerOrchestrator:
 
     def _format_executed_order(self, order) -> str:
         ts = (order.ts_filled or order.ts_submitted).isoformat()
-        return f"{ts} {order.side.value} {order.base_size} @ {order.limit_price} → {order.status.value}"
+        price_part = f"{order.base_size} @ {order.limit_price}"
+        if getattr(order, "stop_price", None):
+            price_part += f" (stop {order.stop_price})"
+        return f"{ts} {order.side.value} {price_part} → {order.status.value}"
 
     def _format_portfolio_snapshot(self, balances: dict[str, Any]) -> str:
         lines = []
@@ -400,6 +403,7 @@ class SchedulerOrchestrator:
             parts.append(f"Max BUY limit: ≤ {max_buy}")
             parts.append(f"Min SELL limit: ≥ {min_sell}")
         parts.append(f"Min order notional: ≥ {MIN_ORDER_NOTIONAL_USDC} USDC")
+        parts.append("Stop-limits: BUY stops must sit above the mid by the same distance, SELL stops below it.")
         return ", ".join(parts)
 
     def _format_market_snapshot(self, snapshot) -> str:
@@ -417,12 +421,16 @@ class SchedulerOrchestrator:
         return " | ".join(parts)
 
     def _planned_order_to_dict(self, order: PlannedOrder) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "side": order.side.value,
             "limit_price": str(order.limit_price),
             "base_size": str(order.base_size),
             "end_time": order.end_time.isoformat(),
+            "order_type": "stop_limit" if order.stop_price is not None else "limit",
         }
+        if order.stop_price is not None:
+            data["stop_price"] = str(order.stop_price)
+        return data
 
     def _extract_sources(self, response: dict[str, Any]) -> Optional[list[Any]]:
         if not response:
