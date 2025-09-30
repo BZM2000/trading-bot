@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Dict, Iterable, List
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -8,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import Settings, get_settings
 from app.db import crud, session_scope
+from app.db.models import OrderStatus
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -19,6 +21,25 @@ def _resolve_settings(request: Request) -> Settings:
     return settings or get_settings()
 
 
+def _select_latest_per_order(records: Iterable[Any], *, limit: int = 20) -> List[Any]:
+    """Return the newest record per order_id, sorted by event time."""
+
+    def _key(record: Any) -> datetime:
+        return (record.ts_filled or record.ts_submitted)
+
+    by_order: dict[str, Any] = {}
+    for record in records:
+        order_id = getattr(record, "order_id", None)
+        if not order_id:
+            continue
+        current = by_order.get(order_id)
+        if current is None or _key(record) > _key(current):
+            by_order[order_id] = record
+
+    sorted_records = sorted(by_order.values(), key=_key, reverse=True)
+    return sorted_records[:limit]
+
+
 def _load_common_context(settings: Settings) -> Dict[str, Any]:
     with session_scope(settings) as session:
         daily_plan = crud.latest_daily_plan(session)
@@ -28,8 +49,14 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
             session,
             hours=24,
             product_id=settings.product_id,
-            limit=20,
+            limit=100,
         )
+        recent_executed = [
+            record
+            for record in recent_executed
+            if record.status not in {OrderStatus.OPEN, OrderStatus.NEW}
+        ]
+        recent_executed = _select_latest_per_order(recent_executed, limit=20)
         run_logs = crud.recent_run_logs(session, limit=25)
         portfolio = crud.latest_portfolio_snapshot(session)
         price = crud.latest_price_snapshot(session, settings.product_id)
