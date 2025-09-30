@@ -46,6 +46,7 @@ class ExecutedOrderRecord:
     end_time: datetime
     product_id: str
     stop_price: Optional[Decimal] = None
+    ts_submitted_inferred: bool = False
 
 
 @dataclass(slots=True)
@@ -188,7 +189,8 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
             prev_filled = order.filled_size
             prev_filled_time = order.ts_filled
 
-            order.ts_submitted = record.ts_submitted
+            if not (record.ts_submitted_inferred and order.ts_submitted):
+                order.ts_submitted = record.ts_submitted
             order.ts_filled = record.ts_filled
             order.side = record.side
             order.limit_price = record.limit_price

@@ -4,10 +4,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.coinbase.exec import ExecutionService, OrderType, PlannedOrder, resolve_submitted_time
 from app.coinbase.validators import ProductConstraints
-from app.db.models import OrderSide
+from app.db import crud, models
+from app.db.models import OrderSide, OrderStatus
 
 
 class DummyClient:
@@ -127,9 +130,10 @@ def test_resolve_submitted_time_uses_created_when_missing_submitted() -> None:
     created = "2024-07-12T09:15:30Z"
     order = {"created_time": created}
 
-    resolved = resolve_submitted_time(order)
+    resolved, inferred = resolve_submitted_time(order, [], None)
 
     assert resolved == datetime(2024, 7, 12, 9, 15, 30, tzinfo=timezone.utc)
+    assert inferred is False
 
 
 def test_resolve_submitted_time_prefers_submitted_timestamp() -> None:
@@ -137,15 +141,101 @@ def test_resolve_submitted_time_prefers_submitted_timestamp() -> None:
     created = "2024-07-11T09:15:30Z"
     order = {"submitted_time": submitted, "created_time": created}
 
-    resolved = resolve_submitted_time(order)
+    resolved, inferred = resolve_submitted_time(order, [], None)
 
     assert resolved == datetime(2024, 7, 12, 10, 0, 0, tzinfo=timezone.utc)
+    assert inferred is False
 
 
 def test_resolve_submitted_time_uses_order_placed_when_available() -> None:
     placed = "2024-07-10T08:30:15Z"
     order = {"order_placed_time": placed}
 
-    resolved = resolve_submitted_time(order)
+    resolved, inferred = resolve_submitted_time(order, [], None)
 
     assert resolved == datetime(2024, 7, 10, 8, 30, 15, tzinfo=timezone.utc)
+    assert inferred is False
+
+
+def test_resolve_submitted_time_derives_from_fill_times() -> None:
+    fills = [{"trade_time": "2024-07-09T01:02:03Z"}, {"trade_time": "2024-07-09T01:03:04Z"}]
+
+    resolved, inferred = resolve_submitted_time({}, fills, None)
+
+    assert resolved == datetime(2024, 7, 9, 1, 2, 3, tzinfo=timezone.utc)
+    assert inferred is False
+
+
+def test_resolve_submitted_time_uses_completed_time_as_last_resort() -> None:
+    completed = datetime(2024, 7, 8, 5, 6, 7, tzinfo=timezone.utc)
+
+    resolved, inferred = resolve_submitted_time({}, [], completed)
+
+    assert resolved == completed
+    assert inferred is False
+
+
+def test_resolve_submitted_time_marks_generated_timestamp(monkeypatch) -> None:
+    fixed = datetime(2024, 7, 7, 12, 0, 0, tzinfo=timezone.utc)
+
+    class DummyDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return fixed if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.coinbase.exec.datetime", DummyDateTime)
+
+    resolved, inferred = resolve_submitted_time({}, [], None)
+
+    assert resolved == fixed
+    assert inferred is True
+
+
+def test_upsert_executed_orders_skips_inferred_submitted_update() -> None:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    models.Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True)
+
+    original_ts = datetime(2024, 7, 5, 12, 0, tzinfo=timezone.utc)
+    with Session() as session:
+        order = models.ExecutedOrder(
+            order_id="order-1",
+            ts_submitted=original_ts,
+            ts_filled=None,
+            side=OrderSide.BUY,
+            limit_price=Decimal("1000"),
+            base_size=Decimal("0.5"),
+            status=OrderStatus.FILLED,
+            filled_size=Decimal("0.5"),
+            client_order_id="client-1",
+            end_time=original_ts + timedelta(hours=1),
+            product_id="ETH-USDC",
+            stop_price=None,
+        )
+        session.add(order)
+        session.commit()
+
+        record = crud.ExecutedOrderRecord(
+            order_id="order-1",
+            ts_submitted=original_ts + timedelta(minutes=5),
+            ts_filled=None,
+            side=OrderSide.BUY,
+            limit_price=Decimal("1000"),
+            base_size=Decimal("0.5"),
+            status=OrderStatus.FILLED,
+            filled_size=Decimal("0.5"),
+            client_order_id="client-1",
+            end_time=original_ts + timedelta(hours=1),
+            product_id="ETH-USDC",
+            stop_price=None,
+            ts_submitted_inferred=True,
+        )
+
+        crud.upsert_executed_orders(session, [record])
+
+        refreshed = session.get(models.ExecutedOrder, "order-1")
+        assert refreshed is not None
+        assert refreshed.ts_submitted == (original_ts.replace(tzinfo=None))
+        assert refreshed.ts_submitted != (original_ts + timedelta(minutes=5)).replace(tzinfo=None)
+
+    engine.dispose()

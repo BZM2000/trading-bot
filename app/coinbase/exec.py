@@ -217,7 +217,6 @@ class ExecutionService:
             if config is None:
                 continue
 
-            submitted = resolve_submitted_time(order)
             client_order_id = order.get("client_order_id", "")
             side = parse_side(order.get("side"))
 
@@ -226,6 +225,7 @@ class ExecutionService:
             completed_time = parse_datetime(order.get("completed_time")) if status != OrderStatus.OPEN else None
             if not completed_time and fills:
                 completed_time = parse_datetime(fills[-1].get("trade_time"))
+            submitted, submitted_inferred = resolve_submitted_time(order, fills, completed_time)
 
             base_size_value = config.get("base_size") or config.get("base_order_size")
             base_size = parse_decimal(base_size_value) or Decimal("0")
@@ -268,6 +268,7 @@ class ExecutionService:
                 crud.ExecutedOrderRecord(
                     order_id=order_id,
                     ts_submitted=submitted,
+                    ts_submitted_inferred=submitted_inferred,
                     ts_filled=completed_time,
                     side=side,
                     limit_price=limit_price,
@@ -383,8 +384,12 @@ def parse_decimal(value: Any) -> Optional[Decimal]:
     return decimal_value
 
 
-def resolve_submitted_time(order: dict[str, Any]) -> datetime:
-    """Return the most accurate submitted timestamp available for an order."""
+def resolve_submitted_time(
+    order: dict[str, Any],
+    fills: Sequence[dict],
+    completed_time: Optional[datetime],
+) -> tuple[datetime, bool]:
+    """Return submitted timestamp and whether it was inferred locally."""
 
     candidates = (
         order.get("submitted_time"),
@@ -395,5 +400,17 @@ def resolve_submitted_time(order: dict[str, Any]) -> datetime:
     for candidate in candidates:
         ts = parse_datetime(candidate)
         if ts is not None:
-            return ts
-    return datetime.now(timezone.utc)
+            return ts, False
+
+    fill_times: list[datetime] = []
+    for fill in fills:
+        ts = parse_datetime(fill.get("trade_time"))
+        if ts is not None:
+            fill_times.append(ts)
+    if fill_times:
+        return min(fill_times), False
+
+    if completed_time is not None:
+        return completed_time, False
+
+    return datetime.now(timezone.utc), True
