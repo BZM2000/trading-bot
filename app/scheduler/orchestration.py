@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
@@ -47,47 +48,64 @@ def filter_portfolio_balances(product_id: str, balances: dict[str, Any]) -> dict
 class SchedulerOrchestrator:
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
+        self._planning_lock = asyncio.Lock()
         self._two_hour_lock = asyncio.Lock()
 
-    async def run_daily(self, *, triggered_by: str = "schedule") -> None:
-        usage = UsageTracker()
-        run_id = self._start_run(RunKind.DAILY, triggered_by)
+    @asynccontextmanager
+    async def _planning_guard(self, kind: RunKind, triggered_by: str):
+        if self._planning_lock.locked():
+            logger.info(
+                "Delaying %s run until current plan finishes",
+                kind.value,
+                extra={"triggered_by": triggered_by},
+            )
+        await self._planning_lock.acquire()
         try:
-            history, executed_summary = self._load_daily_context()
-            async with CoinbaseClient(settings=self.settings) as cb_client:
-                market_service = MarketService(cb_client)
-                snapshot = await market_service.current_snapshot(self.settings.product_id)
-                market_overview = self._format_market_snapshot(snapshot)
-                self._record_price_snapshot(snapshot)
+            yield
+        finally:
+            self._planning_lock.release()
 
-            async with LLMClient(settings=self.settings, usage_tracker=usage) as llm:
-                context = Model1Context(
-                    market_overview=market_overview,
-                    recent_daily_history=history,
-                    executed_orders_summary=executed_summary,
-                )
-                llm_result = await llm.run_model1(context)
-                summary_text = await summarise_to_500_words(llm, llm_result.text)
-
-            self._persist_daily_plan(context, llm_result, summary_text)
-            self._finish_run(run_id, RunStatus.SUCCESS, usage, extra={"triggered_by": triggered_by})
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Daily job failed")
-            self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
-            raise
-
-    async def run_two_hourly(self, *, triggered_by: str = "schedule") -> None:
-        if not self._two_hour_lock.locked():
-            logger.info("Starting two-hour job", extra={"triggered_by": triggered_by})
-        async with self._two_hour_lock:
+    async def run_daily(self, *, triggered_by: str = "schedule") -> None:
+        async with self._planning_guard(RunKind.DAILY, triggered_by):
             usage = UsageTracker()
-            run_id = self._start_run(RunKind.TWO_HOURLY, triggered_by)
+            run_id = self._start_run(RunKind.DAILY, triggered_by)
             try:
-                await self._execute_two_hourly(run_id, usage, triggered_by)
+                history, executed_summary = self._load_daily_context()
+                async with CoinbaseClient(settings=self.settings) as cb_client:
+                    market_service = MarketService(cb_client)
+                    snapshot = await market_service.current_snapshot(self.settings.product_id)
+                    market_overview = self._format_market_snapshot(snapshot)
+                    self._record_price_snapshot(snapshot)
+
+                async with LLMClient(settings=self.settings, usage_tracker=usage) as llm:
+                    context = Model1Context(
+                        market_overview=market_overview,
+                        recent_daily_history=history,
+                        executed_orders_summary=executed_summary,
+                    )
+                    llm_result = await llm.run_model1(context)
+                    summary_text = await summarise_to_500_words(llm, llm_result.text)
+
+                self._persist_daily_plan(context, llm_result, summary_text)
+                self._finish_run(run_id, RunStatus.SUCCESS, usage, extra={"triggered_by": triggered_by})
             except Exception as exc:  # pragma: no cover - defensive
-                logger.exception("Two-hour job failed")
+                logger.exception("Daily job failed")
                 self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
                 raise
+
+    async def run_two_hourly(self, *, triggered_by: str = "schedule") -> None:
+        async with self._planning_guard(RunKind.TWO_HOURLY, triggered_by):
+            if not self._two_hour_lock.locked():
+                logger.info("Starting two-hour job", extra={"triggered_by": triggered_by})
+            async with self._two_hour_lock:
+                usage = UsageTracker()
+                run_id = self._start_run(RunKind.TWO_HOURLY, triggered_by)
+                try:
+                    await self._execute_two_hourly(run_id, usage, triggered_by)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.exception("Two-hour job failed")
+                    self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
+                    raise
 
     async def _execute_two_hourly(self, run_id: int, usage: UsageTracker, triggered_by: str) -> None:
         history, executed_summary = self._load_two_hour_context()
@@ -172,39 +190,40 @@ class SchedulerOrchestrator:
             raise RuntimeError("Model 2/3 failed to produce a plan after drift checks")
 
     async def run_fill_poller(self) -> None:
-        usage = UsageTracker()
-        run_id = self._start_run(RunKind.FIVE_MINUTE, "schedule")
         new_fills: list[str] = []
         open_orders: list[crud.OpenOrderRecord] = []
-        try:
-            async with CoinbaseClient(settings=self.settings) as cb_client:
-                execution = ExecutionService(
-                    cb_client,
-                    product_id=self.settings.product_id,
-                    constraints=ProductConstraints.from_product(
-                        await cb_client.get_product(self.settings.product_id),
-                        self.settings.min_distance_pct,
-                    ),
+        async with self._planning_guard(RunKind.FIVE_MINUTE, "schedule"):
+            usage = UsageTracker()
+            run_id = self._start_run(RunKind.FIVE_MINUTE, "schedule")
+            try:
+                async with CoinbaseClient(settings=self.settings) as cb_client:
+                    execution = ExecutionService(
+                        cb_client,
+                        product_id=self.settings.product_id,
+                        constraints=ProductConstraints.from_product(
+                            await cb_client.get_product(self.settings.product_id),
+                            self.settings.min_distance_pct,
+                        ),
+                    )
+                    with session_scope(self.settings) as session:
+                        sync_result = await execution.sync_open_and_fills(session)
+                    open_orders = sync_result.open_orders
+                    new_fills = [
+                        record.order_id
+                        for record in sync_result.executed_orders
+                        if record.order_id in sync_result.changed_order_ids
+                        and record.status == OrderStatus.FILLED
+                    ]
+                self._finish_run(
+                    run_id,
+                    RunStatus.SUCCESS,
+                    usage,
+                    extra={"new_fills": new_fills},
                 )
-                with session_scope(self.settings) as session:
-                    sync_result = await execution.sync_open_and_fills(session)
-                open_orders = sync_result.open_orders
-                new_fills = [
-                    record.order_id
-                    for record in sync_result.executed_orders
-                    if record.order_id in sync_result.changed_order_ids
-                    and record.status == OrderStatus.FILLED
-                ]
-            self._finish_run(
-                run_id,
-                RunStatus.SUCCESS,
-                usage,
-                extra={"new_fills": new_fills},
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Fill poller failed")
-            self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
-            raise
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("Fill poller failed")
+                self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
+                raise
 
         if not open_orders and not self._two_hour_lock.locked():
             await self.run_two_hourly(triggered_by="no_open_orders")

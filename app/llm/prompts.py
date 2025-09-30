@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 
-MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for a 0.5% round-trip trading fee, highlighting only edges that clear this hurdle."""
+MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for a 0.5% round-trip trading fee, highlighting only edges that clear this hurdle. When fresh macro or market context would improve your plan, call the `web_search` tool before you respond."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. You may choose between a classic limit order or a stop-limit order. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours, so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. You may choose between a classic limit order or a stop-limit order. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours, so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC. Whenever current market, news, or regulatory context would sharpen your decision, call the `web_search` tool before finalising your order."""
 
 MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Support both limit and stop-limit orders, returning at most one order marked for a 2-hour GTD window. Do not invent orders."""
 
@@ -49,6 +49,7 @@ def build_model1_user_prompt(context: Model1Context) -> str:
         "\nInstructions: produce today's 24-hour ETH-USDC plan.",
         "Explicitly factor in the 0.5% round-trip trading fee when setting targets, sizing, and risk tolerances.",
         "Toolkit: the executor can stage GTD limit or stop-limit orders. Use stop-limits for moves that must cross the mid-price before entering.",
+        "If fresh news or data would materially change your view, call the `web_search` tool before finalizing the plan.",
         "Take-profit / stop-loss legs are staged after fills; do not assume multi-leg orders in one step.",
     ]
     return "\n".join(prompt)
@@ -71,6 +72,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "\nExecution constraints:",
         context.constraint_notes,
         "\nInstructions: propose exactly one ETH-USDC limit or stop-limit order (BUY or SELL). Pick the single highest-quality idea for the next 2 hours.",
+        "Use the `web_search` tool when updated market or news context would improve confidence before you commit to an order.",
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
