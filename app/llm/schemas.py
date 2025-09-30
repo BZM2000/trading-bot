@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.coinbase.exec import PlannedOrder
+from app.coinbase.exec import OrderType, PlannedOrder
 from app.db.models import OrderSide
 
 
@@ -15,10 +15,10 @@ class Model3Order(BaseModel):
     side: Literal["BUY", "SELL"] = Field(description="Order side")
     limit_price: Decimal = Field(gt=Decimal("0"), description="Limit price in quote currency")
     base_size: Decimal = Field(gt=Decimal("0"), description="Order size in base currency")
-    post_only: bool = Field(default=True, description="Whether the order must remain maker-only")
-    order_type: Literal["limit", "stop_limit"] = Field(
+    post_only: Optional[bool] = Field(default=None, description="Whether the order must remain maker-only")
+    order_type: Literal["limit", "stop_limit", "market"] = Field(
         default="limit",
-        description="Execution style: classic limit or stop-limit order",
+        description="Execution style: classic limit, stop-limit, or market order",
     )
     stop_price: Optional[Decimal] = Field(
         default=None,
@@ -29,10 +29,22 @@ class Model3Order(BaseModel):
 
     @model_validator(mode="after")
     def validate_stop_configuration(self) -> "Model3Order":
-        if self.order_type == "stop_limit" and self.stop_price is None:
-            raise ValueError("stop_limit orders require stop_price")
-        if self.order_type == "limit" and self.stop_price is not None:
-            raise ValueError("Limit orders must omit stop_price")
+        if self.order_type == "stop_limit":
+            if self.stop_price is None:
+                raise ValueError("stop_limit orders require stop_price")
+            if self.post_only is True:
+                raise ValueError("stop_limit orders cannot be post-only")
+            object.__setattr__(self, "post_only", False)
+        elif self.order_type == "limit":
+            if self.stop_price is not None:
+                raise ValueError("Limit orders must omit stop_price")
+            object.__setattr__(self, "post_only", True if self.post_only is None else self.post_only)
+        elif self.order_type == "market":
+            if self.stop_price is not None:
+                raise ValueError("Market orders must omit stop_price")
+            if self.post_only is True:
+                raise ValueError("Market orders cannot be post-only")
+            object.__setattr__(self, "post_only", False)
         return self
 
 
@@ -59,6 +71,7 @@ class Model3Response(BaseModel):
                 post_only=order.post_only if order.order_type == "limit" else False,
                 end_time=end_time,
                 stop_price=order.stop_price,
+                order_type=OrderType(order.order_type),
             )
             for order in self.orders
         ]

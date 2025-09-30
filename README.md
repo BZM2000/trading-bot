@@ -1,10 +1,10 @@
 # Trading Bot Platform (ETH-USDC)
 
-This project implements a local-first orchestration layer for an ETH-USDC limit and stop-limit trading bot. It follows the plan in `plan.md` and provides:
+This project implements a local-first orchestration layer for an ETH-USDC trading bot that can stage limit, stop-limit, and market orders. It follows the plan in `plan.md` and provides:
 
 - Automated daily, two-hourly, and five-minute jobs coordinated by APScheduler.
 - Coinbase Advanced Trade integrations for best bid/ask snapshots, product metadata, order placement, and fill synchronisation.
-- Three-stage LLM workflow (Model 1 → Model 2 → Model 3) using the OpenAI Responses API, with optional stub mode for offline testing.
+- Three-stage LLM workflow (Model 1 → Model 2 → Model 3) using the OpenAI Responses API, with optional stub mode for offline testing. Model 1 produces daily strategic guidance with percentage-based sizing rules, Model 2 crafts a single tactical order (limit, stop-limit, or market), and Model 3 validates the machine-readable payload.
 - PostgreSQL persistence via SQLAlchemy/Alembic for plans, prompts, orders, fills, price and portfolio snapshots, and run logs.
 - HTMX FastAPI dashboard exposing current plans, orders, portfolio, and recent job runs.
 
@@ -62,7 +62,7 @@ uvicorn app.main:app --reload
 The scheduler boots automatically with three jobs:
 
 - Daily plan at 00:00 UTC (`Model 1`).
-- Tactical plan every two hours (`Model 2` + `Model 3` + execution pipeline).
+- Tactical plan every two hours (`Model 2` + `Model 3` + execution pipeline). When a market order executes, a follow-up two-hour run is scheduled ~10 seconds later to capture the new state.
 - Fill poller every five minutes.
 
 Manual triggers (useful in development) are available:
@@ -82,7 +82,7 @@ Run the unit test suite with:
 pytest
 ```
 
-Tests cover validators, market indicator helpers, and Model 3 schema enforcement. They do not require external services.
+Tests cover validators, market indicator helpers, execution service logic (including market/stop-limit payloads), and Model 3 schema enforcement. They do not require external services.
 
 ## Docker
 
@@ -100,6 +100,6 @@ Provide Railway Postgres credentials via `DATABASE_URL` when running against man
 - `LLM_STUB_MODE=true` keeps the system offline-friendly during development. Toggle off when ready for real OpenAI calls.
 - Override `DATABASE_URL` only when you provision a managed database (e.g. Railway Postgres); the default SQLite file supports local experimentation.
 - Leave `AUTO_MIGRATE_ON_START=true` on Railway so migrations run automatically during deploys; set it to `false` only if you manage Alembic manually.
-- Portfolio snapshots fed into Model 2 only include the base/quote assets for the configured product to minimise LLM token usage.
+- Model 1 receives only market context and high-level run history (capped at the 20 most recent entries) to stay focused on broader strategy. Model 2 additionally sees the filtered portfolio snapshot for the tradable pair.
 - `EXECUTION_ENABLED` must remain false unless you are prepared to place real orders.
 - Extend `tests/` with integration tests as real API credentials become available.

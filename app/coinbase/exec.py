@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from enum import Enum
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,12 @@ from app.db import crud
 from app.db.models import OrderSide, OrderStatus
 
 
+class OrderType(str, Enum):
+    LIMIT = "limit"
+    STOP_LIMIT = "stop_limit"
+    MARKET = "market"
+
+
 @dataclass(slots=True)
 class PlannedOrder:
     side: OrderSide
@@ -29,6 +36,7 @@ class PlannedOrder:
     end_time: datetime
     post_only: bool = True
     stop_price: Optional[Decimal] = None
+    order_type: OrderType = OrderType.LIMIT
 
 
 @dataclass(slots=True)
@@ -81,38 +89,66 @@ class ExecutionService:
         validated: list[PlannedOrder] = []
         for order in planned_orders:
             size = ensure_min_size(order.base_size, self.constraints)
-            if order.stop_price is None:
-                price = round_price(order.limit_price, self.constraints, order.side)
-                enforce_min_distance(price, mid_price, self.constraints, order.side)
+
+            if order.order_type == OrderType.MARKET:
+                if order.stop_price is not None:
+                    raise ValueError("Market orders cannot include a stop price")
                 validated.append(
                     PlannedOrder(
                         side=order.side,
-                        limit_price=price,
+                        limit_price=order.limit_price,
                         base_size=size,
                         end_time=order.end_time,
-                        post_only=order.post_only,
+                        post_only=False,
                         stop_price=None,
+                        order_type=OrderType.MARKET,
                     )
                 )
                 continue
 
-            stop_price = round_stop_price(order.stop_price, self.constraints, order.side)
-            limit_price = round_price(order.limit_price, self.constraints, order.side)
-            enforce_stop_distance(stop_price, mid_price, self.constraints, order.side)
+            if order.limit_price is None:
+                raise ValueError("Limit price must be provided for limit and stop-limit orders")
 
-            if order.side == OrderSide.BUY and limit_price < stop_price:
-                raise ValueError("Buy stop-limit orders require limit price ≥ stop price")
-            if order.side == OrderSide.SELL and limit_price > stop_price:
-                raise ValueError("Sell stop-limit orders require limit price ≤ stop price")
+            if order.order_type == OrderType.LIMIT and order.stop_price is not None:
+                raise ValueError("Limit orders must omit stop price")
 
+            if order.order_type == OrderType.STOP_LIMIT:
+                if order.stop_price is None:
+                    raise ValueError("Stop price must be provided for stop-limit orders")
+
+                stop_price = round_stop_price(order.stop_price, self.constraints, order.side)
+                limit_price = round_price(order.limit_price, self.constraints, order.side)
+                enforce_stop_distance(stop_price, mid_price, self.constraints, order.side)
+
+                if order.side == OrderSide.BUY and limit_price < stop_price:
+                    raise ValueError("Buy stop-limit orders require limit price ≥ stop price")
+                if order.side == OrderSide.SELL and limit_price > stop_price:
+                    raise ValueError("Sell stop-limit orders require limit price ≤ stop price")
+
+                validated.append(
+                    PlannedOrder(
+                        side=order.side,
+                        limit_price=limit_price,
+                        base_size=size,
+                        end_time=order.end_time,
+                        post_only=False,
+                        stop_price=stop_price,
+                        order_type=OrderType.STOP_LIMIT,
+                    )
+                )
+                continue
+
+            price = round_price(order.limit_price, self.constraints, order.side)
+            enforce_min_distance(price, mid_price, self.constraints, order.side)
             validated.append(
                 PlannedOrder(
                     side=order.side,
-                    limit_price=limit_price,
+                    limit_price=price,
                     base_size=size,
                     end_time=order.end_time,
-                    post_only=False,
-                    stop_price=stop_price,
+                    post_only=order.post_only,
+                    stop_price=None,
+                    order_type=OrderType.LIMIT,
                 )
             )
         return validated
@@ -125,16 +161,13 @@ class ExecutionService:
             "side": order.side.value,
         }
 
-        if order.stop_price is None:
+        if order.order_type == OrderType.MARKET:
             payload["order_configuration"] = {
-                "limit_limit_gtd": {
+                "market_market_ioc": {
                     "base_size": str(order.base_size),
-                    "limit_price": str(order.limit_price),
-                    "post_only": order.post_only,
-                    "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
             }
-        else:
+        elif order.order_type == OrderType.STOP_LIMIT:
             payload["order_configuration"] = {
                 "stop_limit_stop_limit_gtd": {
                     "base_size": str(order.base_size),
@@ -142,6 +175,15 @@ class ExecutionService:
                     "stop_price": str(order.stop_price),
                     "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                     "stop_direction": self._stop_direction(order),
+                }
+            }
+        else:
+            payload["order_configuration"] = {
+                "limit_limit_gtd": {
+                    "base_size": str(order.base_size),
+                    "limit_price": str(order.limit_price),
+                    "post_only": order.post_only,
+                    "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
             }
 
@@ -171,21 +213,41 @@ class ExecutionService:
                 continue
             status_str = (order.get("status") or order.get("order_status") or "").upper()
             status = STATUS_MAP.get(status_str, OrderStatus.NEW)
-            _config_type, config = self._extract_order_config(order)
+            config_type, config = self._extract_order_config(order)
             if config is None:
                 continue
 
-            base_size = Decimal(config.get("base_size", "0"))
-            limit_price = Decimal(config.get("limit_price", "0"))
-            stop_price = Decimal(config.get("stop_price", "0")) if config.get("stop_price") else None
             submitted = parse_datetime(order.get("submitted_time")) or datetime.now(timezone.utc)
-            end_time = (
-                parse_datetime(config.get("end_time"))
-                or parse_datetime(order.get("expire_time"))
-                or submitted
-            )
             client_order_id = order.get("client_order_id", "")
             side = parse_side(order.get("side"))
+
+            fills = fills_by_order.get(order_id, [])
+            filled_size = sum_fills(fills)
+            completed_time = parse_datetime(order.get("completed_time")) if status != OrderStatus.OPEN else None
+            if not completed_time and fills:
+                completed_time = parse_datetime(fills[-1].get("trade_time"))
+
+            base_size_value = config.get("base_size") or config.get("base_order_size")
+            base_size = parse_decimal(base_size_value) or Decimal("0")
+            if base_size == 0 and filled_size:
+                base_size = filled_size
+
+            if config_type == "market":
+                limit_price = (
+                    average_fill_price(fills)
+                    or parse_decimal(order.get("average_filled_price"))
+                    or Decimal("0")
+                )
+                stop_price = None
+                end_time = completed_time or submitted
+            else:
+                limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")
+                stop_price = parse_decimal(config.get("stop_price"))
+                end_time = (
+                    parse_datetime(config.get("end_time"))
+                    or parse_datetime(order.get("expire_time"))
+                    or submitted
+                )
 
             if status == OrderStatus.OPEN:
                 open_records.append(
@@ -201,12 +263,6 @@ class ExecutionService:
                         stop_price=stop_price,
                     )
                 )
-
-            fills = fills_by_order.get(order_id, [])
-            filled_size = sum_fills(fills)
-            completed_time = parse_datetime(order.get("completed_time")) if status != OrderStatus.OPEN else None
-            if not completed_time and fills:
-                completed_time = parse_datetime(fills[-1].get("trade_time"))
 
             executed_records.append(
                 crud.ExecutedOrderRecord(
@@ -251,6 +307,11 @@ class ExecutionService:
             if value:
                 return ("stop_limit", value)
 
+        for key in ("market_market_ioc", "market_market_gtc"):
+            value = config.get(key)
+            if value:
+                return ("market", value)
+
         return ("unknown", None)
 
 
@@ -286,3 +347,37 @@ def sum_fills(fills: Sequence[dict]) -> Optional[Decimal]:
         except Exception:
             continue
     return total if total > 0 else None
+
+
+def average_fill_price(fills: Sequence[dict]) -> Optional[Decimal]:
+    if not fills:
+        return None
+    total_size = Decimal("0")
+    total_quote = Decimal("0")
+    for fill in fills:
+        size_value = fill.get("size") or fill.get("base_size")
+        price_value = fill.get("price") or fill.get("unit_price") or fill.get("average_price")
+        if size_value is None or price_value is None:
+            continue
+        try:
+            size = Decimal(str(size_value))
+            price = Decimal(str(price_value))
+        except Exception:
+            continue
+        if size <= 0 or price <= 0:
+            continue
+        total_size += size
+        total_quote += size * price
+    if total_size <= 0 or total_quote <= 0:
+        return None
+    return total_quote / total_size
+
+
+def parse_decimal(value: Any) -> Optional[Decimal]:
+    if value in (None, ""):
+        return None
+    try:
+        decimal_value = Decimal(str(value))
+    except Exception:
+        return None
+    return decimal_value

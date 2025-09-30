@@ -9,7 +9,14 @@ from typing import Any, Optional
 
 from fastapi import FastAPI
 
-from app.coinbase import CoinbaseClient, ExecutionService, MarketService, PlannedOrder, ProductConstraints
+from app.coinbase import (
+    CoinbaseClient,
+    ExecutionService,
+    MarketService,
+    OrderType,
+    PlannedOrder,
+    ProductConstraints,
+)
 from app.config import Settings, get_settings
 from app.db import RunKind, RunStatus, session_scope
 from app.db import crud
@@ -23,6 +30,7 @@ from app.llm.usage import UsageTracker
 logger = logging.getLogger("scheduler.orchestrator")
 
 MIN_ORDER_NOTIONAL_USDC = Decimal("10")
+MARKET_FOLLOW_UP_DELAY_SECONDS = 10
 
 
 
@@ -144,6 +152,7 @@ class SchedulerOrchestrator:
                     model3_context = Model3Context(model2_output=model2_result.text, validation_notes=validation_notes)
                     model3_response: Model3Response = await llm.run_model3(model3_context)
                     planned_orders = model3_response.to_planned_orders()
+                    has_market_order = any(order.order_type is OrderType.MARKET for order in planned_orders)
 
                     if planned_orders:
                         drift_ok = await self._check_price_drift(market_service, market_snapshot.mid)
@@ -185,6 +194,8 @@ class SchedulerOrchestrator:
                             "placed_orders": placed_order_responses,
                         },
                     )
+                    if has_market_order:
+                        self._schedule_market_followup(triggered_by="market_followup")
                     return
 
             raise RuntimeError("Model 2/3 failed to produce a plan after drift checks")
@@ -271,6 +282,12 @@ class SchedulerOrchestrator:
                 datetime.now(timezone.utc) - timedelta(days=7),
                 product_id=self.settings.product_id,
             )
+            executed_orders = [
+                order
+                for order in executed_orders
+                if order.status not in {OrderStatus.OPEN, OrderStatus.NEW}
+            ]
+            executed_orders = executed_orders[:20]
         history = [self._format_prompt_history_entry(item.ts, item.compact_summary_500w or item.response_text) for item in history_models]
         executed_summary = [self._format_executed_order(order) for order in executed_orders]
         return history, executed_summary
@@ -288,6 +305,7 @@ class SchedulerOrchestrator:
                 for order in executed_orders
                 if order.status in {OrderStatus.FILLED, OrderStatus.EXPIRED}
             ]
+            executed_orders = executed_orders[:20]
         history = [self._format_prompt_history_entry(item.ts, item.compact_summary_500w or item.response_text) for item in history_models]
         executed_summary = [self._format_executed_order(order) for order in executed_orders]
         return history, executed_summary
@@ -368,6 +386,20 @@ class SchedulerOrchestrator:
         drift = abs(current.mid - start_mid) / start_mid
         return drift < self.settings.price_drift_pct
 
+    def _schedule_market_followup(self, *, triggered_by: str) -> None:
+        async def _delayed_two_hourly() -> None:
+            await asyncio.sleep(MARKET_FOLLOW_UP_DELAY_SECONDS)
+            try:
+                await self.run_two_hourly(triggered_by=triggered_by)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Follow-up two-hour run after market order failed")
+
+        logger.info(
+            "Scheduling follow-up two-hour run after market order",
+            extra={"triggered_by": triggered_by, "delay_seconds": MARKET_FOLLOW_UP_DELAY_SECONDS},
+        )
+        asyncio.create_task(_delayed_two_hourly())
+
     def _record_price_snapshot(self, snapshot) -> None:
         with session_scope(self.settings) as session:
             crud.record_price_snapshot(
@@ -445,7 +477,7 @@ class SchedulerOrchestrator:
             "limit_price": str(order.limit_price),
             "base_size": str(order.base_size),
             "end_time": order.end_time.isoformat(),
-            "order_type": "stop_limit" if order.stop_price is not None else "limit",
+            "order_type": order.order_type.value,
         }
         if order.stop_price is not None:
             data["stop_price"] = str(order.stop_price)

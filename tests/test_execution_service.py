@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.coinbase.exec import ExecutionService, PlannedOrder
+from app.coinbase.exec import ExecutionService, OrderType, PlannedOrder
 from app.coinbase.validators import ProductConstraints
 from app.db.models import OrderSide
 
@@ -56,6 +56,7 @@ def test_validate_stop_limit_order(execution_service: ExecutionService) -> None:
         end_time=end_time,
         post_only=False,
         stop_price=Decimal("2050.001"),
+        order_type=OrderType.STOP_LIMIT,
     )
 
     validated = execution_service._validate_orders([order], mid_price=Decimal("2000"))
@@ -73,6 +74,7 @@ def test_validate_stop_limit_enforces_direction(execution_service: ExecutionServ
         base_size=Decimal("0.05"),
         end_time=end_time,
         stop_price=Decimal("1980"),
+        order_type=OrderType.STOP_LIMIT,
     )
 
     with pytest.raises(ValueError):
@@ -88,6 +90,7 @@ def test_stop_limit_payload_build(execution_service: ExecutionService) -> None:
         end_time=end_time,
         post_only=False,
         stop_price=Decimal("1980"),
+        order_type=OrderType.STOP_LIMIT,
     )
 
     payload = execution_service._build_payload(order)
@@ -95,3 +98,26 @@ def test_stop_limit_payload_build(execution_service: ExecutionService) -> None:
     assert config["stop_price"] == "1980"
     assert config["limit_price"] == "1950"
     assert config["stop_direction"] == "STOP_DIRECTION_STOP_DOWN"
+
+
+def test_market_order_validation_and_payload(execution_service: ExecutionService) -> None:
+    end_time = datetime.now(timezone.utc) + timedelta(hours=2)
+    order = PlannedOrder(
+        side=OrderSide.BUY,
+        limit_price=Decimal("2000"),
+        base_size=Decimal("0.05"),
+        end_time=end_time,
+        post_only=False,
+        stop_price=None,
+        order_type=OrderType.MARKET,
+    )
+
+    validated = execution_service._validate_orders([order], mid_price=Decimal("2050"))
+    assert len(validated) == 1
+    assert validated[0].order_type is OrderType.MARKET
+    assert validated[0].post_only is False
+
+    payload = execution_service._build_payload(validated[0])
+    assert "market_market_ioc" in payload["order_configuration"]
+    market_cfg = payload["order_configuration"]["market_market_ioc"]
+    assert market_cfg["base_size"] == "0.05"
