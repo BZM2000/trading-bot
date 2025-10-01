@@ -208,18 +208,10 @@ class SchedulerOrchestrator:
             run_id = self._start_run(RunKind.FIVE_MINUTE, "schedule")
             try:
                 async with CoinbaseClient(settings=self.settings) as cb_client:
-                    market_service = MarketService(cb_client)
-                    snapshot = await market_service.current_snapshot(self.settings.product_id)
-                    self._record_price_snapshot(snapshot)
-                    await self._capture_portfolio_snapshot(cb_client)
-                    product = await cb_client.get_product(self.settings.product_id)
                     execution = ExecutionService(
                         cb_client,
                         product_id=self.settings.product_id,
-                        constraints=ProductConstraints.from_product(
-                            product,
-                            self.settings.min_distance_pct,
-                        ),
+                        constraints=None,
                     )
                     with session_scope(self.settings) as session:
                         sync_result = await execution.sync_open_and_fills(session)

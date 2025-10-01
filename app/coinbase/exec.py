@@ -61,7 +61,7 @@ class ExecutionService:
         client: CoinbaseClient,
         *,
         product_id: str,
-        constraints: ProductConstraints,
+        constraints: ProductConstraints | None,
     ) -> None:
         self.client = client
         self.product_id = product_id
@@ -85,6 +85,9 @@ class ExecutionService:
         sides = {order.side for order in planned_orders}
         if len(planned_orders) != len(sides):
             raise ValueError("Duplicate order sides detected")
+
+        if self.constraints is None:
+            raise ValueError("Product constraints must be provided before placing orders")
 
         validated: list[PlannedOrder] = []
         for order in planned_orders:
