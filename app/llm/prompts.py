@@ -78,7 +78,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
-        "- Always leave at least 0.5 USDC uncommitted after fees. Treat usable USDC for sizing as max(CURRENT available USDC − 0.5, 0); if that leaves less than the 10 USDC notional minimum, skip the BUY idea.",
+        "- Always leave at least 0.5 USDC uncommitted after fees. Treat usable USDC for sizing as max(CURRENT available USDC − 0.5, 0) and ensure limit_price * base_size * 1.005 stays within that budget; if the cushion leaves under the 10 USDC notional minimum, skip the BUY idea.",
         "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
         "Execution styles (treat all three options in parallel and pick the one with the strongest rationale):",
         "- LIMIT: Maker-style GTD order. BUY limits must sit at least the minimum distance below the mid and SELL limits at least the same distance above it. Set `post_only=true` when you want to guarantee maker execution, otherwise toggle it off.",

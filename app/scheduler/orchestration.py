@@ -32,6 +32,7 @@ logger = logging.getLogger("scheduler.orchestrator")
 
 MIN_ORDER_NOTIONAL_USDC = Decimal("10")
 QUOTE_BUFFER_USDC = Decimal("0.5")
+ENTRY_FEE_RATE = Decimal("0.005")  # assume 0.5% entry fee for sizing safety
 MARKET_FOLLOW_UP_DELAY_SECONDS = 10
 
 
@@ -467,12 +468,14 @@ class SchedulerOrchestrator:
                 continue
 
             cost = order.limit_price * order.base_size
-            if cost <= remaining_cap:
+            total_cost = cost * (Decimal("1") + ENTRY_FEE_RATE)
+            if total_cost <= remaining_cap:
                 adjusted_orders.append(order)
-                remaining_cap = max(remaining_cap - cost, Decimal("0"))
+                remaining_cap = max(remaining_cap - total_cost, Decimal("0"))
                 continue
 
-            max_base = remaining_cap / order.limit_price if order.limit_price else Decimal("0")
+            denominator = order.limit_price * (Decimal("1") + ENTRY_FEE_RATE)
+            max_base = remaining_cap / denominator if denominator else Decimal("0")
             max_base = round_size(max_base, constraints)
             if max_base <= Decimal("0") or max_base < constraints.min_size:
                 logger.info(
@@ -496,7 +499,9 @@ class SchedulerOrchestrator:
                     order_type=order.order_type,
                 )
             )
-            remaining_cap = max(remaining_cap - (order.limit_price * max_base), Decimal("0"))
+            adjusted_cost = order.limit_price * max_base
+            adjusted_total = adjusted_cost * (Decimal("1") + ENTRY_FEE_RATE)
+            remaining_cap = max(remaining_cap - adjusted_total, Decimal("0"))
 
         return adjusted_orders
 
