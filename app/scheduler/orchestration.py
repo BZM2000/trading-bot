@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from fastapi import FastAPI
@@ -17,6 +17,7 @@ from app.coinbase import (
     PlannedOrder,
     ProductConstraints,
 )
+from app.coinbase.validators import round_size
 from app.config import Settings, get_settings
 from app.db import RunKind, RunStatus, session_scope
 from app.db import crud
@@ -30,6 +31,7 @@ from app.llm.usage import UsageTracker
 logger = logging.getLogger("scheduler.orchestrator")
 
 MIN_ORDER_NOTIONAL_USDC = Decimal("10")
+QUOTE_BUFFER_USDC = Decimal("0.5")
 MARKET_FOLLOW_UP_DELAY_SECONDS = 10
 
 
@@ -152,6 +154,11 @@ class SchedulerOrchestrator:
                     model3_context = Model3Context(model2_output=model2_result.text, validation_notes=validation_notes)
                     model3_response: Model3Response = await llm.run_model3(model3_context)
                     planned_orders = model3_response.to_planned_orders()
+                    planned_orders = self._apply_quote_buffer(
+                        planned_orders,
+                        portfolio_balances,
+                        constraints,
+                    )
                     has_market_order = any(order.order_type is OrderType.MARKET for order in planned_orders)
 
                     if planned_orders:
@@ -426,6 +433,97 @@ class SchedulerOrchestrator:
         if getattr(order, "stop_price", None):
             price_part += f" (stop {order.stop_price})"
         return f"{ts} {order.side.value} {price_part} → {order.status.value}"
+
+    def _apply_quote_buffer(
+        self,
+        planned_orders: list[PlannedOrder],
+        balances: dict[str, Any],
+        constraints: ProductConstraints,
+    ) -> list[PlannedOrder]:
+        if not planned_orders:
+            return planned_orders
+
+        available_quote = self._available_quote_balance(balances)
+        if available_quote is None:
+            return planned_orders
+
+        spend_cap = available_quote - QUOTE_BUFFER_USDC
+        if spend_cap <= Decimal("0"):
+            if any(order.side is OrderSide.BUY for order in planned_orders):
+                logger.info(
+                    "Dropping BUY orders: insufficient USDC after applying buffer",
+                    extra={
+                        "available_usdc": str(available_quote),
+                        "buffer_usdc": str(QUOTE_BUFFER_USDC),
+                    },
+                )
+            return [order for order in planned_orders if order.side is not OrderSide.BUY]
+
+        remaining_cap = spend_cap
+        adjusted_orders: list[PlannedOrder] = []
+        for order in planned_orders:
+            if order.side is not OrderSide.BUY:
+                adjusted_orders.append(order)
+                continue
+
+            cost = order.limit_price * order.base_size
+            if cost <= remaining_cap:
+                adjusted_orders.append(order)
+                remaining_cap = max(remaining_cap - cost, Decimal("0"))
+                continue
+
+            max_base = remaining_cap / order.limit_price if order.limit_price else Decimal("0")
+            max_base = round_size(max_base, constraints)
+            if max_base <= Decimal("0") or max_base < constraints.min_size:
+                logger.info(
+                    "Dropping BUY order: buffer reduces quote below minimum size",
+                    extra={
+                        "available_usdc": str(available_quote),
+                        "buffer_usdc": str(QUOTE_BUFFER_USDC),
+                        "limit_price": str(order.limit_price),
+                    },
+                )
+                continue
+
+            adjusted_orders.append(
+                PlannedOrder(
+                    side=order.side,
+                    limit_price=order.limit_price,
+                    base_size=max_base,
+                    end_time=order.end_time,
+                    post_only=order.post_only,
+                    stop_price=order.stop_price,
+                    order_type=order.order_type,
+                )
+            )
+            remaining_cap = max(remaining_cap - (order.limit_price * max_base), Decimal("0"))
+
+        return adjusted_orders
+
+    def _available_quote_balance(self, balances: dict[str, Any]) -> Optional[Decimal]:
+        quote_currency = self._quote_currency()
+        snapshot = balances.get(quote_currency)
+        if not snapshot:
+            return None
+        value = snapshot.get("available")
+        if value is None:
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            logger.warning(
+                "Failed to parse available balance",
+                extra={"quote_currency": quote_currency, "raw_value": value},
+            )
+            return None
+
+    def _quote_currency(self) -> str:
+        product_id = self.settings.product_id or ""
+        for separator in ("-", "/"):
+            if separator in product_id:
+                _, quote = product_id.split(separator, 1)
+                return quote.upper()
+        return product_id.upper()
 
     def _format_portfolio_snapshot(self, balances: dict[str, Any]) -> str:
         lines = []
