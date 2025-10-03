@@ -19,6 +19,7 @@ def _make_order(
     price: str,
     size: str,
     post_only: bool,
+    client_order_id: str | None = None,
 ) -> models.ExecutedOrder:
     return models.ExecutedOrder(
         order_id=order_id,
@@ -29,7 +30,7 @@ def _make_order(
         base_size=Decimal(size),
         status=OrderStatus.FILLED,
         filled_size=Decimal(size),
-        client_order_id=f"client-{order_id}",
+        client_order_id=client_order_id or f"client-{order_id}",
         end_time=ts,
         product_id="ETH-USDC",
         stop_price=None,
@@ -52,6 +53,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="700",
                     size="1",
                     post_only=True,
+                    client_order_id="0123456789abcdef0123456789abcdef",
                 ),
                 _make_order(
                     order_id="sell-mar",
@@ -60,6 +62,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="900",
                     size="1",
                     post_only=False,
+                    client_order_id="fedcba9876543210fedcba9876543210",
                 ),
                 _make_order(
                     order_id="buy-dec",
@@ -68,6 +71,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="800",
                     size="1",
                     post_only=False,
+                    client_order_id="00112233445566778899aabbccddeeff",
                 ),
                 _make_order(
                     order_id="sell-dec",
@@ -76,6 +80,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="900",
                     size="1",
                     post_only=True,
+                    client_order_id="ffeeddccbbaa99887766554433221100",
                 ),
                 _make_order(
                     order_id="buy-jan",
@@ -84,6 +89,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="1000",
                     size="1",
                     post_only=True,
+                    client_order_id="11111111111111111111111111111111",
                 ),
                 _make_order(
                     order_id="sell-jan",
@@ -92,6 +98,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="1100",
                     size="1",
                     post_only=False,
+                    client_order_id="22222222222222222222222222222222",
                 ),
                 _make_order(
                     order_id="buy-open",
@@ -100,6 +107,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="1200",
                     size="1",
                     post_only=False,
+                    client_order_id="33333333333333333333333333333333",
                 ),
                 _make_order(
                     order_id="ignored-2024",
@@ -108,6 +116,16 @@ def test_calculate_pnl_summary_intervals() -> None:
                     price="1000",
                     size="1",
                     post_only=True,
+                    client_order_id="44444444444444444444444444444444",
+                ),
+                _make_order(
+                    order_id="manual",
+                    ts=datetime(2026, 1, 1, 4, 0, tzinfo=timezone.utc),
+                    side=OrderSide.SELL,
+                    price="2000",
+                    size="1",
+                    post_only=False,
+                    client_order_id="manual-order",
                 ),
             ]
             session.add_all(orders)
@@ -118,6 +136,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                 session,
                 product_id="ETH-USDC",
                 now=datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc),
+                start_anchor=datetime(2025, 12, 1, 0, 0, tzinfo=timezone.utc),
             )
 
         keys = [interval.key for interval in summary.intervals]
@@ -136,11 +155,11 @@ def test_calculate_pnl_summary_intervals() -> None:
         assert by_key["30d"].profit_before_fees == Decimal("200")
         assert by_key["30d"].profit_after_fees == Decimal("190.6")
 
-        assert by_key["365d"].profit_before_fees == Decimal("400")
-        assert by_key["365d"].profit_after_fees == Decimal("387.5")
+        assert by_key["365d"].profit_before_fees == Decimal("200")
+        assert by_key["365d"].profit_after_fees == Decimal("190.6")
 
-        assert summary.total_profit_before_fees == Decimal("400")
-        assert summary.total_profit_after_fees == Decimal("387.5")
+        assert summary.total_profit_before_fees == Decimal("200")
+        assert summary.total_profit_after_fees == Decimal("190.6")
     finally:
         engine.dispose()
 

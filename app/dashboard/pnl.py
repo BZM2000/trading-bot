@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from string import hexdigits
 from typing import Iterable, Optional, Sequence
 
 from sqlalchemy import select
@@ -49,11 +50,16 @@ def calculate_pnl_summary(
     *,
     product_id: str,
     now: Optional[datetime] = None,
+    start_anchor: Optional[datetime] = None,
 ) -> PNLSummary:
     """Aggregate profit metrics for dashboard display."""
 
     aware_now = _ensure_aware(now or datetime.now(timezone.utc))
-    trades = _load_trades(session, product_id=product_id)
+    trades = _load_trades(
+        session,
+        product_id=product_id,
+        start_anchor=start_anchor,
+    )
     entries = _build_entries(trades)
 
     intervals: list[IntervalMetrics] = []
@@ -97,17 +103,33 @@ def _timeframes() -> Iterable[tuple[str, str, Optional[timedelta]]]:
     )
 
 
-def _load_trades(session: Session, *, product_id: str) -> Sequence[TradeSnapshot]:
+def _load_trades(
+    session: Session,
+    *,
+    product_id: str,
+    start_anchor: Optional[datetime],
+) -> Sequence[TradeSnapshot]:
     statement = select(models.ExecutedOrder).where(models.ExecutedOrder.product_id == product_id)
     orders = session.scalars(statement).all()
 
     trades: list[TradeSnapshot] = []
     for order in orders:
+        client_order_id = getattr(order, "client_order_id", "") or ""
+        if not _is_bot_client_order_id(client_order_id):
+            continue
+
         timestamp = _resolve_timestamp(order)
-        if timestamp is None or timestamp < CUTOFF_TS:
+        if timestamp is None:
+            continue
+        if timestamp < CUTOFF_TS:
+            continue
+        if start_anchor and timestamp < start_anchor:
             continue
 
         if order.side not in (models.OrderSide.BUY, models.OrderSide.SELL):
+            continue
+
+        if order.status is not models.OrderStatus.FILLED:
             continue
 
         price = order.limit_price
@@ -205,6 +227,12 @@ def _build_entries(trades: Sequence[TradeSnapshot]) -> list["_PnLEntry"]:
         )
 
     return entries
+
+
+def _is_bot_client_order_id(value: str) -> bool:
+    if len(value) != 32:
+        return False
+    return all(char in hexdigits for char in value)
 
 
 @dataclass(slots=True)

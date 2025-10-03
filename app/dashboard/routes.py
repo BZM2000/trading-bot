@@ -46,6 +46,7 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
         daily_plan = crud.latest_daily_plan(session)
         two_hour_plan = crud.latest_two_hour_plan(session)
         open_orders = crud.list_open_orders(session, product_id=settings.product_id)
+        anchor_run_log = crud.earliest_run_log(session)
         recent_executed = crud.recent_executed_orders(
             session,
             hours=24,
@@ -61,7 +62,12 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
         run_logs = crud.recent_run_logs(session, limit=25)
         portfolio = crud.latest_portfolio_snapshot(session)
         price = crud.latest_price_snapshot(session, settings.product_id)
-        pnl_summary = pnl.calculate_pnl_summary(session, product_id=settings.product_id)
+        start_anchor = anchor_run_log.started_at if anchor_run_log else None
+        pnl_summary = pnl.calculate_pnl_summary(
+            session,
+            product_id=settings.product_id,
+            start_anchor=start_anchor,
+        )
     return {
         "daily_plan": daily_plan,
         "two_hour_plan": two_hour_plan,
