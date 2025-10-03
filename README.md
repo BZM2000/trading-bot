@@ -1,105 +1,146 @@
 # Trading Bot Platform (ETH-USDC)
 
-This project implements a local-first orchestration layer for an ETH-USDC trading bot that can stage limit, stop-limit, and market orders. It follows the plan in `plan.md` and provides:
+Local-first orchestration layer for ETH-USDC trading strategies built on FastAPI, APScheduler, Coinbase Advanced Trade, and a lightweight HTMX dashboard.
 
-- Automated daily, two-hourly, and five-minute jobs coordinated by APScheduler.
-- Coinbase Advanced Trade integrations for best bid/ask snapshots, product metadata, order placement, and fill synchronisation.
-- Three-stage LLM workflow (Model 1 → Model 2 → Model 3) using the OpenAI Responses API, with optional stub mode for offline testing. Model 1 produces daily strategic guidance with percentage-based sizing rules, Model 2 crafts a single tactical order (limit, stop-limit, or market), and Model 3 validates the machine-readable payload.
-- PostgreSQL persistence via SQLAlchemy/Alembic for plans, prompts, orders, fills, price and portfolio snapshots, and run logs.
-- HTMX FastAPI dashboard exposing current plans, orders, portfolio, and recent job runs.
+**Important:** Keep `EXECUTION_ENABLED=false` unless you understand and accept the risk of placing live orders. The default configuration is safe for research and paper trading.
 
-## Prerequisites
+## Features
 
-- Python 3.11+
-- SQLite (default) or PostgreSQL 14+ for production deployments
-- OpenAI API key (Responses API access)
-- Coinbase Advanced Trade API key/secret
+- Multi-stage LLM planning pipeline (Model 1 → Model 2 → Model 3) with stub mode for offline development.
+- Coinbase Advanced Trade integrations for product metadata, order placement, fill synchronisation, and market data snapshots.
+- APScheduler-based job orchestration for daily strategy, two-hour tactical plans, and five-minute fill polling.
+- SQLAlchemy models with Alembic migrations for plans, prompts, orders, fills, price snapshots, and run logs.
+- HTMX dashboard surfacing current plans, open orders, portfolio state, and scheduler activity.
 
-## Environment configuration
+## Architecture Overview
 
-Create a `.env` based on `.env.example`:
+- `app/main.py` wires FastAPI, the dashboard routes, and the scheduler.
+- `app/coinbase` encapsulates Coinbase Advanced Trade clients and helpers.
+- `app/llm` defines the multi-step prompt pipeline and validation logic.
+- `app/scheduler` hosts scheduled jobs, orchestration helpers, and manual triggers.
+- `app/db` provides SQLAlchemy models, sessions, and Alembic migrations.
+- `app/dashboard` renders HTMX views for monitoring the bot.
 
-```bash
-cp .env.example .env
-```
+## Quickstart
 
-Update the file with real credentials and desired toggles. Key variables:
+1. Clone the repository and create a Python 3.11 virtual environment.
+2. Activate the environment and install dependencies:
 
-- `OPENAI_API_KEY`: OpenAI Responses API key.
-- `COINBASE_API_KEY` / `COINBASE_API_SECRET`: Coinbase Advanced Trade credentials.
-- `DATABASE_URL`: SQLAlchemy URL. Defaults to `sqlite:///./trading_bot.db` for local testing; set your Railway Postgres URL when deploying.
-- `LLM_STUB_MODE`: set to `true` for offline testing with canned LLM outputs (OpenAI key optional in this mode).
-- `EXECUTION_ENABLED`: set to `true` to allow the executor to place real orders (requires Coinbase credentials; default `false`).
-- `AUTO_MIGRATE_ON_START`: keep `true` so the app runs Alembic migrations automatically on startup (set `false` if you prefer manual control).
-- `OPENAI_REASONING_M1` / `OPENAI_REASONING_M2` / `OPENAI_REASONING_M3` / `OPENAI_REASONING_SUMMARISER`: override reasoning effort per model (`high`, `medium`, `minimal`). Defaults align with the repository guidelines.
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-## Dependency installation
+3. Copy configuration defaults and tailor them to your environment:
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+   ```bash
+   cp .env.example .env
+   ```
 
-## Database migrations
+4. Start the application:
 
-Initialise the schema with Alembic (optional when `AUTO_MIGRATE_ON_START=true` because the app runs this on boot):
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+
+Uvicorn will expose the API at `http://localhost:8000`, mount the HTMX dashboard, and boot the scheduler.
+
+## Configuration
+
+Set environment variables in `.env` (never commit real credentials):
+
+- `OPENAI_API_KEY` – OpenAI Responses API key. Optional when `LLM_STUB_MODE=true`.
+- `COINBASE_API_KEY` / `COINBASE_API_SECRET` – Coinbase Advanced Trade credentials used when execution is enabled.
+- `DATABASE_URL` – SQLAlchemy URL (defaults to `sqlite:///./trading_bot.db`). Override for PostgreSQL deployments.
+- `LLM_STUB_MODE` – `true` to use canned model responses for tests and development.
+- `EXECUTION_ENABLED` – `false` by default; set `true` only when ready to submit live orders.
+- `AUTO_MIGRATE_ON_START` – runs Alembic migrations automatically when the app boots (`true` is recommended).
+- `OPENAI_REASONING_M1`, `OPENAI_REASONING_M2`, `OPENAI_REASONING_M3`, `OPENAI_REASONING_SUMMARISER` – tune reasoning effort per model (`minimal`, `medium`, or `high`).
+
+Additional toggles live in `app/config.py`; extend the Pydantic settings model if you introduce new variables.
+
+## Scheduler Jobs & Manual Triggers
+
+- Daily strategy refresh at 00:00 UTC (Model 1).
+- Two-hour tactical plan generation and validation (Model 2 + Model 3 + execution pipeline).
+- Five-minute fill poller to capture fills placed outside the bot.
+
+Development-friendly endpoints allow manual execution:
+
+- `POST /force/daily`
+- `POST /force/2h`
+
+When market orders execute, the scheduler queues a follow-up run to capture the updated state.
+
+## Database & Migrations
+
+Alembic migrations live under `app/db/migrations`. When `AUTO_MIGRATE_ON_START=true`, the application applies them automatically. For manual control run:
 
 ```bash
 alembic -c alembic.ini upgrade head
 ```
 
-The Alembic environment reads `DATABASE_URL` via the application settings module. SQLite users can skip this step because the default file-backed database is created on first run.
-
-## Running the application
-
-Start the FastAPI app with Uvicorn:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-The scheduler boots automatically with three jobs:
-
-- Daily plan at 00:00 UTC (`Model 1`).
-- Tactical plan every two hours (`Model 2` + `Model 3` + execution pipeline). When a market order executes, a follow-up two-hour run is scheduled ~10 seconds later to capture the new state.
-- Fill poller every five minutes.
-
-Manual triggers (useful in development) are available:
-
-- `POST /force/daily`
-- `POST /force/2h`
+The default SQLite database is file-backed and created on first run; switch to PostgreSQL for production environments.
 
 ## Dashboard
 
-Navigate to `http://localhost:8000/dashboard` to view plans, orders, portfolio snapshots, and recent run logs. Sections auto-refresh via HTMX.
+Visit `http://localhost:8000/dashboard` to review the latest plans, open orders, portfolio snapshots, and scheduler history. HTMX keeps the panels updated without requiring full page reloads.
 
 ## Testing
 
-Run the unit test suite with:
+Run the test suite with:
 
 ```bash
 pytest
 ```
 
-Tests cover validators, market indicator helpers, execution service logic (including market/stop-limit payloads), and Model 3 schema enforcement. They do not require external services.
+Ensure `LLM_STUB_MODE=true` and `EXECUTION_ENABLED=false` in your `.env` so tests do not call external services or place orders.
 
 ## Docker
 
-A development Dockerfile is provided for convenience:
+Build and run the container image for parity with production deployments:
 
 ```bash
 docker build -t trading-bot .
 docker run --env-file .env -p 8000:8000 trading-bot
 ```
 
-Provide Railway Postgres credentials via `DATABASE_URL` when running against managed storage; otherwise the default SQLite file will be used inside the container.
+Provide a PostgreSQL `DATABASE_URL` when running in managed environments such as Railway; otherwise the container falls back to SQLite.
 
-## Notes & next steps
+## Project Layout
 
-- `LLM_STUB_MODE=true` keeps the system offline-friendly during development. Toggle off when ready for real OpenAI calls.
-- Override `DATABASE_URL` only when you provision a managed database (e.g. Railway Postgres); the default SQLite file supports local experimentation.
-- Leave `AUTO_MIGRATE_ON_START=true` on Railway so migrations run automatically during deploys; set it to `false` only if you manage Alembic manually.
-- Model 1 receives only market context and high-level run history (capped at the 20 most recent entries) to stay focused on broader strategy. Model 2 additionally sees the filtered portfolio snapshot for the tradable pair.
-- `EXECUTION_ENABLED` must remain false unless you are prepared to place real orders.
-- Extend `tests/` with integration tests as real API credentials become available.
+```
+app/
+  coinbase/      # Coinbase Advanced Trade client and helpers
+  dashboard/     # HTMX routes, templates, and assets
+  db/            # SQLAlchemy models, sessions, and migrations
+  llm/           # Prompt orchestration and validation logic
+  scheduler/     # APScheduler jobs and orchestration helpers
+  main.py        # FastAPI entrypoint wiring API, scheduler, and dashboard
+scripts/alembic  # Alembic command helpers
+tests/           # Pytest suites mirroring application modules
+plan.md          # High-level build plan and decision record
+```
+
+## Responsible Use & Security
+
+- Store secrets in `.env` only; never commit them to version control.
+- Leave `EXECUTION_ENABLED=false` until you have verified order logic with sandbox data.
+- Rotate Coinbase credentials regularly and restrict permissions to the minimum required for trading the ETH-USDC pair.
+- Review model outputs when disabling stub mode; human-in-the-loop validation is strongly recommended before enabling live execution.
+
+## Contributing
+
+Contributions are welcome. Align with the repository guidelines:
+
+- Follow PEP 8 and use explicit type hints.
+- Use absolute imports under the `app.` namespace and JSON logging utilities from `app.logging`.
+- Add targeted tests under `tests/` for new behaviour, including database migrations.
+- Squash work into conventional commits (e.g., `fix: normalise candle timestamps`).
+
+Open an issue to discuss significant changes before submitting a pull request.
+
+## License
+
+The project is currently provided without a published license. Contact the maintainers for usage questions and select an open-source license before wider distribution.
