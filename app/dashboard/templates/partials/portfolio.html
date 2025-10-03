@@ -1,0 +1,63 @@
+<section
+  id="portfolio-section"
+  hx-get="/dashboard/portfolio"
+  hx-trigger="every 180s"
+  hx-target="#portfolio-section"
+  hx-swap="outerHTML"
+>
+  <h2>Portfolio Overview</h2>
+  <div class="portfolio-grid">
+    <div class="wide">
+      <h3>PnL Overview</h3>
+      {% if pnl_summary and pnl_summary.intervals %}
+      <table>
+        <thead>
+          <tr>
+            <th>Window</th>
+            <th>Profit (Before Fees)</th>
+            <th>Profit (After Fees)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for interval in pnl_summary.intervals %}
+          <tr>
+            <td>{{ interval.label }}</td>
+            <td>${{ '{:,.2f}'.format(interval.profit_before_fees) }}</td>
+            <td>${{ '{:,.2f}'.format(interval.profit_after_fees) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p>
+        <strong>Total Profit Since 2025:</strong>
+        ${{ '{:,.2f}'.format(pnl_summary.total_profit_before_fees) }} (before fees) ·
+        ${{ '{:,.2f}'.format(pnl_summary.total_profit_after_fees) }} (after fees)
+      </p>
+      {% else %}
+      <p>No executed orders since 2025.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Portfolio Snapshot</h3>
+      {% if portfolio %}
+      <ul>
+        {% for currency, data in portfolio.balances_json.items() %}
+        <li>{{ currency }} — available: {{ data.available }}, hold: {{ data.hold }}, total: {{ data.balance }}</li>
+        {% endfor %}
+      </ul>
+      <small>As of {{ portfolio.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>
+      {% else %}
+      <p>No portfolio snapshot stored.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Latest Price</h3>
+      {% if price %}
+      <p>Mid: {{ price.mid }} · Bid: {{ price.best_bid }} · Ask: {{ price.best_ask }}</p>
+      <small>Captured {{ price.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>
+      {% else %}
+      <p>No price snapshot available.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>

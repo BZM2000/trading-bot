@@ -6,31 +6,6 @@
   hx-swap="outerHTML"
 >
   <h2>Status</h2>
-  <div class="row">
-    <div class="column">
-      <h3>Portfolio Snapshot</h3>
-      {% if portfolio %}
-      <ul>
-        {% for currency, data in portfolio.balances_json.items() %}
-        <li>{{ currency }} — available: {{ data.available }}, hold: {{ data.hold }}, total: {{ data.balance }}</li>
-        {% endfor %}
-      </ul>
-      <small>As of {{ portfolio.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>
-      {% else %}
-      <p>No portfolio snapshot stored.</p>
-      {% endif %}
-    </div>
-    <div class="column">
-      <h3>Latest Price</h3>
-      {% if price %}
-      <p>Mid: {{ price.mid }} · Bid: {{ price.best_bid }} · Ask: {{ price.best_ask }}</p>
-      <small>Captured {{ price.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>
-      {% else %}
-      <p>No price snapshot available.</p>
-      {% endif %}
-    </div>
-  </div>
-
   <h3>Recent Runs</h3>
   {% if run_logs %}
   <table>

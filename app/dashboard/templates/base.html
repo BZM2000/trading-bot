@@ -15,6 +15,14 @@
       .status-success { color: #2d862d; }
       .status-failed { color: #c0392b; }
       .status-running { color: #1f618d; }
+      .tab-list { display: flex; gap: 0.5rem; border-bottom: 1px solid #d9d9d9; margin-bottom: 1.5rem; flex-wrap: wrap; }
+      .tab-button { border: none; background: transparent; padding: 0.75rem 1.25rem; cursor: pointer; font-size: 0.95rem; border-bottom: 3px solid transparent; color: #4a4a4a; font-weight: 500; }
+      .tab-button:focus { outline: none; border-color: #8c8cff; color: #1f1f7a; }
+      .tab-button.is-active { border-color: #1f618d; color: #1f618d; }
+      .tab-panel { display: none; }
+      .tab-panel.is-active { display: block; }
+      .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+      .portfolio-grid .wide { grid-column: 1 / -1; }
     </style>
   </head>
   <body>

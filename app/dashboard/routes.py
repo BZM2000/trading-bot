@@ -95,6 +95,14 @@ async def plans_partial(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("partials/plans.html", context)
 
 
+@router.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_partial(request: Request) -> HTMLResponse:
+    settings = _resolve_settings(request)
+    context = await _load_common_context(settings)
+    context["request"] = request
+    return templates.TemplateResponse("partials/portfolio.html", context)
+
+
 @router.get("/orders", response_class=HTMLResponse)
 async def orders_partial(request: Request) -> HTMLResponse:
     settings = _resolve_settings(request)

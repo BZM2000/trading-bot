@@ -4,8 +4,113 @@
 <h1>ETH-USDC Trading Dashboard</h1>
 <p>Environment: {{ settings.environment }} · Product: {{ settings.product_id }} · Timezone: {{ settings.app_timezone }}</p>
 
-{% include "partials/plans.html" %}
-{% include "partials/pnl.html" %}
-{% include "partials/orders.html" %}
-{% include "partials/runs.html" %}
+<div class="tabs">
+  <div class="tab-list" role="tablist">
+    <button
+      id="tab-portfolio-button"
+      class="tab-button is-active"
+      role="tab"
+      aria-selected="true"
+      aria-controls="tab-portfolio"
+      type="button"
+      data-tab-target="portfolio"
+    >Portfolio</button>
+    <button
+      id="tab-orders-button"
+      class="tab-button"
+      role="tab"
+      aria-selected="false"
+      aria-controls="tab-orders"
+      type="button"
+      data-tab-target="orders"
+    >Orders</button>
+    <button
+      id="tab-status-button"
+      class="tab-button"
+      role="tab"
+      aria-selected="false"
+      aria-controls="tab-status"
+      type="button"
+      data-tab-target="status"
+    >Status (Recent Runs)</button>
+    <button
+      id="tab-plans-button"
+      class="tab-button"
+      role="tab"
+      aria-selected="false"
+      aria-controls="tab-plans"
+      type="button"
+      data-tab-target="plans"
+    >Plans</button>
+  </div>
+
+  <div class="tab-panels">
+    <div
+      id="tab-portfolio"
+      class="tab-panel is-active"
+      role="tabpanel"
+      aria-labelledby="tab-portfolio-button"
+      aria-hidden="false"
+      data-tab-panel="portfolio"
+    >
+      {% include "partials/portfolio.html" %}
+    </div>
+    <div
+      id="tab-orders"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-orders-button"
+      aria-hidden="true"
+      data-tab-panel="orders"
+    >
+      {% include "partials/orders.html" %}
+    </div>
+    <div
+      id="tab-status"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-status-button"
+      aria-hidden="true"
+      data-tab-panel="status"
+    >
+      {% include "partials/runs.html" %}
+    </div>
+    <div
+      id="tab-plans"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-plans-button"
+      aria-hidden="true"
+      data-tab-panel="plans"
+    >
+      {% include "partials/plans.html" %}
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const buttons = Array.from(document.querySelectorAll('[data-tab-target]'));
+    const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+
+    function activateTab(target) {
+      buttons.forEach((button) => {
+        const isActive = button.dataset.tabTarget === target;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-selected', String(isActive));
+      });
+      panels.forEach((panel) => {
+        const isActive = panel.dataset.tabPanel === target;
+        panel.classList.toggle('is-active', isActive);
+        panel.setAttribute('aria-hidden', String(!isActive));
+      });
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        activateTab(button.dataset.tabTarget);
+      });
+    });
+  });
+</script>
 {% endblock %}
