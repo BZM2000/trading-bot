@@ -57,6 +57,7 @@ Set environment variables in `.env` (never commit real credentials):
 - `EXECUTION_ENABLED` – `false` by default; set `true` only when ready to submit live orders.
 - `AUTO_MIGRATE_ON_START` – runs Alembic migrations automatically when the app boots (`true` is recommended).
 - `OPENAI_REASONING_M1`, `OPENAI_REASONING_M2`, `OPENAI_REASONING_M3`, `OPENAI_REASONING_SUMMARISER` – tune reasoning effort per model (`minimal`, `medium`, or `high`).
+- `DASHBOARD_BASIC_AUTH_ENABLED`, `DASHBOARD_BASIC_USER`, `DASHBOARD_BASIC_PASSWORD_HASH` – enable HTTP Basic auth for the dashboard and store the PBKDF2-SHA256 hash of your password.
 
 Additional toggles live in `app/config.py`; extend the Pydantic settings model if you introduce new variables.
 

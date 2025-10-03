@@ -61,6 +61,16 @@ class Settings(BaseSettings):
         default=False, validation_alias="EXECUTION_ENABLED"
     )
 
+    dashboard_basic_auth_enabled: bool = Field(
+        default=False, validation_alias="DASHBOARD_BASIC_AUTH_ENABLED"
+    )
+    dashboard_basic_username: Optional[str] = Field(
+        default=None, validation_alias="DASHBOARD_BASIC_USER"
+    )
+    dashboard_basic_password_hash: Optional[str] = Field(
+        default=None, validation_alias="DASHBOARD_BASIC_PASSWORD_HASH"
+    )
+
     openai_responses_model_m1: str = Field(
         default="gpt-5", validation_alias="OPENAI_MODEL_M1"
     )
@@ -101,6 +111,11 @@ class Settings(BaseSettings):
                 "COINBASE_API_KEY and COINBASE_API_SECRET must be set when EXECUTION_ENABLED is true"
             )
         self.coinbase_signing_algorithm = (self.coinbase_signing_algorithm or "ed25519").lower()
+        if self.dashboard_basic_auth_enabled:
+            if not (self.dashboard_basic_username and self.dashboard_basic_password_hash):
+                raise ValueError(
+                    "DASHBOARD_BASIC_USER and DASHBOARD_BASIC_PASSWORD_HASH must be set when DASHBOARD_BASIC_AUTH_ENABLED is true"
+                )
         return self
 
 

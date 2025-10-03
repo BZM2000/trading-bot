@@ -4,17 +4,22 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config import Settings, get_settings
 from app.coinbase.client import CoinbaseClient
 from app.dashboard import pnl
+from app.dashboard.security import require_dashboard_basic_auth
 from app.db import crud, session_scope
 from app.db.models import OrderStatus
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(
+    prefix="/dashboard",
+    tags=["dashboard"],
+    dependencies=[Depends(require_dashboard_basic_auth)],
+)
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
 
