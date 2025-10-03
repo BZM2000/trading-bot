@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
@@ -8,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config import Settings, get_settings
+from app.coinbase.client import CoinbaseClient
 from app.dashboard import pnl
 from app.db import crud, session_scope
 from app.db.models import OrderStatus
@@ -15,6 +17,8 @@ from app.db.models import OrderStatus
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 templates = Jinja2Templates(directory="app/dashboard/templates")
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_settings(request: Request) -> Settings:
@@ -41,12 +45,11 @@ def _select_latest_per_order(records: Iterable[Any], *, limit: int = 20) -> List
     return sorted_records[:limit]
 
 
-def _load_common_context(settings: Settings) -> Dict[str, Any]:
+async def _load_common_context(settings: Settings) -> Dict[str, Any]:
     with session_scope(settings) as session:
         daily_plan = crud.latest_daily_plan(session)
         two_hour_plan = crud.latest_two_hour_plan(session)
         open_orders = crud.list_open_orders(session, product_id=settings.product_id)
-        anchor_run_log = crud.earliest_run_log(session)
         recent_executed = crud.recent_executed_orders(
             session,
             hours=24,
@@ -62,12 +65,7 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
         run_logs = crud.recent_run_logs(session, limit=25)
         portfolio = crud.latest_portfolio_snapshot(session)
         price = crud.latest_price_snapshot(session, settings.product_id)
-        start_anchor = anchor_run_log.started_at if anchor_run_log else None
-        pnl_summary = pnl.calculate_pnl_summary(
-            session,
-            product_id=settings.product_id,
-            start_anchor=start_anchor,
-        )
+    pnl_summary = await _resolve_pnl_summary(settings)
     return {
         "daily_plan": daily_plan,
         "two_hour_plan": two_hour_plan,
@@ -84,7 +82,7 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
     settings = _resolve_settings(request)
-    context = _load_common_context(settings)
+    context = await _load_common_context(settings)
     context["request"] = request
     return templates.TemplateResponse("dashboard.html", context)
 
@@ -92,7 +90,7 @@ async def dashboard(request: Request) -> HTMLResponse:
 @router.get("/plans", response_class=HTMLResponse)
 async def plans_partial(request: Request) -> HTMLResponse:
     settings = _resolve_settings(request)
-    context = _load_common_context(settings)
+    context = await _load_common_context(settings)
     context["request"] = request
     return templates.TemplateResponse("partials/plans.html", context)
 
@@ -100,7 +98,7 @@ async def plans_partial(request: Request) -> HTMLResponse:
 @router.get("/orders", response_class=HTMLResponse)
 async def orders_partial(request: Request) -> HTMLResponse:
     settings = _resolve_settings(request)
-    context = _load_common_context(settings)
+    context = await _load_common_context(settings)
     context["request"] = request
     return templates.TemplateResponse("partials/orders.html", context)
 
@@ -108,6 +106,15 @@ async def orders_partial(request: Request) -> HTMLResponse:
 @router.get("/status", response_class=HTMLResponse)
 async def status_partial(request: Request) -> HTMLResponse:
     settings = _resolve_settings(request)
-    context = _load_common_context(settings)
+    context = await _load_common_context(settings)
     context["request"] = request
     return templates.TemplateResponse("partials/runs.html", context)
+
+
+async def _resolve_pnl_summary(settings: Settings) -> pnl.PNLSummary:
+    try:
+        async with CoinbaseClient(settings=settings) as client:
+            return await pnl.calculate_pnl_summary(client, product_id=settings.product_id)
+    except Exception:
+        logger.exception("Failed to load PnL summary from Coinbase", extra={"product_id": settings.product_id})
+        return pnl.empty_summary()

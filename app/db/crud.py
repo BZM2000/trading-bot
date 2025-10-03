@@ -343,8 +343,3 @@ def recent_executed_orders(
 def recent_run_logs(session: Session, limit: int = 20) -> list[models.RunLog]:
     statement = select(models.RunLog).order_by(models.RunLog.started_at.desc()).limit(limit)
     return list(session.scalars(statement))
-
-
-def earliest_run_log(session: Session) -> Optional[models.RunLog]:
-    statement = select(models.RunLog).order_by(models.RunLog.started_at.asc()).limit(1)
-    return session.scalars(statement).first()

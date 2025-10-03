@@ -162,13 +162,19 @@ class CoinbaseClient:
         product_id: Optional[str] = None,
         order_ids: Optional[Iterable[str]] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+        cursor: Optional[str] = None,
+        return_payload: bool = False,
+    ) -> Any:
         params: dict[str, Any] = {"limit": limit}
         if product_id:
             params["product_id"] = product_id
         if order_ids:
             params["order_ids"] = ",".join(order_ids)
+        if cursor:
+            params["cursor"] = cursor
         payload = await self._request("GET", "/api/v3/brokerage/orders/historical/fills", params=params)
+        if return_payload:
+            return payload
         return payload.get("fills", [])
 
     async def list_orders(
@@ -177,13 +183,20 @@ class CoinbaseClient:
         product_id: Optional[str] = None,
         order_status: Optional[list[str]] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+        cursor: Optional[str] = None,
+        return_payload: bool = False,
+    ) -> Any:
         statuses = [status.upper() for status in order_status] if order_status else None
         if statuses and "OPEN" in statuses and len(statuses) > 1:
             non_open = [status for status in statuses if status != "OPEN"]
             combined: list[dict[str, Any]] = []
             combined.extend(
-                await self.list_orders(product_id=product_id, order_status=["OPEN"], limit=limit)
+                await self.list_orders(
+                    product_id=product_id,
+                    order_status=["OPEN"],
+                    limit=limit,
+                    cursor=cursor,
+                )
             )
             if non_open:
                 combined.extend(
@@ -205,7 +218,11 @@ class CoinbaseClient:
             params["product_id"] = product_id
         if statuses:
             params["order_status"] = statuses
+        if cursor:
+            params["cursor"] = cursor
         payload = await self._request("GET", "/api/v3/brokerage/orders/historical/batch", params=params)
+        if return_payload:
+            return payload
         return payload.get("orders", [])
 
     async def create_order(self, order: dict[str, Any]) -> dict[str, Any]:

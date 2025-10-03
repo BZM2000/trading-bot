@@ -4,12 +4,10 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from string import hexdigits
 from typing import Iterable, Optional, Sequence
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+from app.coinbase.client import CoinbaseClient
+from app.coinbase.exec import parse_decimal, parse_side, parse_datetime
 from app.db import models
 
 
@@ -45,26 +43,42 @@ class PNLSummary:
     total_profit_after_fees: Decimal
 
 
-def calculate_pnl_summary(
-    session: Session,
+async def calculate_pnl_summary(
+    client: CoinbaseClient,
     *,
     product_id: str,
     now: Optional[datetime] = None,
-    start_anchor: Optional[datetime] = None,
 ) -> PNLSummary:
-    """Aggregate profit metrics for dashboard display."""
+    """Hydrate PnL summary using Coinbase fills since 2025."""
 
     aware_now = _ensure_aware(now or datetime.now(timezone.utc))
-    trades = _load_trades(
-        session,
-        product_id=product_id,
-        start_anchor=start_anchor,
-    )
+    trades = await _load_trades_from_api(client, product_id=product_id, start_anchor=CUTOFF_TS)
+    return _summarise_trades(trades, now=aware_now)
+
+
+def summarise_trades(
+    trades: Sequence[TradeSnapshot],
+    *,
+    now: Optional[datetime] = None,
+) -> PNLSummary:
+    """Summarise already-fetched trades into interval metrics."""
+
+    aware_now = _ensure_aware(now or datetime.now(timezone.utc))
+    return _summarise_trades(trades, now=aware_now)
+
+
+def empty_summary(now: Optional[datetime] = None) -> PNLSummary:
+    """Return a zeroed summary, useful when API access is unavailable."""
+
+    return summarise_trades((), now=now)
+
+
+def _summarise_trades(trades: Sequence[TradeSnapshot], *, now: datetime) -> PNLSummary:
     entries = _build_entries(trades)
 
     intervals: list[IntervalMetrics] = []
     for key, label, delta in _timeframes():
-        start = _effective_start(aware_now, delta)
+        start = _effective_start(now, delta)
         metrics = _summarise_interval(entries, start=start)
         intervals.append(
             IntervalMetrics(
@@ -103,65 +117,63 @@ def _timeframes() -> Iterable[tuple[str, str, Optional[timedelta]]]:
     )
 
 
-def _load_trades(
-    session: Session,
+async def _load_trades_from_api(
+    client: CoinbaseClient,
     *,
     product_id: str,
-    start_anchor: Optional[datetime],
-) -> Sequence[TradeSnapshot]:
-    statement = select(models.ExecutedOrder).where(models.ExecutedOrder.product_id == product_id)
-    orders = session.scalars(statement).all()
-
+    start_anchor: datetime,
+) -> list[TradeSnapshot]:
     trades: list[TradeSnapshot] = []
-    for order in orders:
-        client_order_id = getattr(order, "client_order_id", "") or ""
-        if not _is_bot_client_order_id(client_order_id):
-            continue
+    cursor: Optional[str] = None
 
-        timestamp = _resolve_timestamp(order)
-        if timestamp is None:
-            continue
-        if timestamp < CUTOFF_TS:
-            continue
-        if start_anchor and timestamp < start_anchor:
-            continue
-
-        if order.side not in (models.OrderSide.BUY, models.OrderSide.SELL):
-            continue
-
-        if order.status is not models.OrderStatus.FILLED:
-            continue
-
-        price = order.limit_price
-        filled_size = order.filled_size
-        if price is None:
-            continue
-        if filled_size is None:
-            if order.status is not models.OrderStatus.FILLED:
-                continue
-            filled_size = order.base_size
-        if filled_size is None:
-            continue
-
-        try:
-            price_decimal = Decimal(price)
-            size_decimal = Decimal(filled_size)
-        except Exception:  # pragma: no cover - defensive against malformed data
-            continue
-
-        if price_decimal <= 0 or size_decimal <= 0:
-            continue
-
-        post_only = bool(order.post_only)
-        trades.append(
-            TradeSnapshot(
-                timestamp=timestamp,
-                side=order.side,
-                price=price_decimal,
-                size=size_decimal,
-                post_only=post_only,
-            )
+    while True:
+        payload = await client.list_fills(
+            product_id=product_id,
+            limit=200,
+            cursor=cursor,
+            return_payload=True,
         )
+        fills = payload.get("fills", [])
+        if not fills:
+            break
+
+        stop_pagination = False
+        for fill in fills:
+            if fill.get("product_id") and fill.get("product_id") != product_id:
+                continue
+
+            ts = parse_datetime(fill.get("trade_time"))
+            if ts is None:
+                continue
+            ts = _ensure_aware(ts)
+            if ts < start_anchor:
+                stop_pagination = True
+                continue
+
+            side = parse_side(fill.get("order_side") or fill.get("side"))
+            size = parse_decimal(fill.get("size") or fill.get("base_size"))
+            price = parse_decimal(fill.get("price") or fill.get("unit_price") or fill.get("average_price"))
+            if size is None or price is None:
+                continue
+            if size <= 0 or price <= 0:
+                continue
+
+            liquidity = str(fill.get("liquidity_indicator") or fill.get("liquidity") or "").upper()
+            post_only = liquidity == "MAKER"
+
+            trades.append(
+                TradeSnapshot(
+                    timestamp=ts,
+                    side=side,
+                    price=price,
+                    size=size,
+                    post_only=post_only,
+                )
+            )
+
+        cursor = payload.get("cursor")
+        if not cursor or stop_pagination:
+            break
 
     trades.sort(key=lambda trade: trade.timestamp)
     return trades
@@ -229,12 +241,6 @@ def _build_entries(trades: Sequence[TradeSnapshot]) -> list["_PnLEntry"]:
     return entries
 
 
-def _is_bot_client_order_id(value: str) -> bool:
-    if len(value) != 32:
-        return False
-    return all(char in hexdigits for char in value)
-
-
 @dataclass(slots=True)
 class _Lot:
     price: Decimal
@@ -273,13 +279,6 @@ def _summarise_interval(entries: Sequence["_PnLEntry"], *, start: datetime) -> _
         fee_total=fee_total,
         profit_after_fees=profit_after,
     )
-
-
-def _resolve_timestamp(order: models.ExecutedOrder) -> Optional[datetime]:
-    ts = order.ts_filled or order.ts_submitted
-    if ts is None:
-        return None
-    return _ensure_aware(ts)
 
 
 def _ensure_aware(value: datetime) -> datetime:
