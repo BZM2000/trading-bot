@@ -46,7 +46,39 @@ def test_calculate_pnl_summary_intervals() -> None:
         with Session() as session:
             orders = [
                 _make_order(
-                    order_id="maker-buy",
+                    order_id="buy-feb",
+                    ts=datetime(2025, 2, 1, 0, 0, tzinfo=timezone.utc),
+                    side=OrderSide.BUY,
+                    price="700",
+                    size="1",
+                    post_only=True,
+                ),
+                _make_order(
+                    order_id="sell-mar",
+                    ts=datetime(2025, 3, 1, 0, 0, tzinfo=timezone.utc),
+                    side=OrderSide.SELL,
+                    price="900",
+                    size="1",
+                    post_only=False,
+                ),
+                _make_order(
+                    order_id="buy-dec",
+                    ts=datetime(2025, 12, 28, 0, 0, tzinfo=timezone.utc),
+                    side=OrderSide.BUY,
+                    price="800",
+                    size="1",
+                    post_only=False,
+                ),
+                _make_order(
+                    order_id="sell-dec",
+                    ts=datetime(2025, 12, 29, 0, 0, tzinfo=timezone.utc),
+                    side=OrderSide.SELL,
+                    price="900",
+                    size="1",
+                    post_only=True,
+                ),
+                _make_order(
+                    order_id="buy-jan",
                     ts=datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc),
                     side=OrderSide.BUY,
                     price="1000",
@@ -54,7 +86,7 @@ def test_calculate_pnl_summary_intervals() -> None:
                     post_only=True,
                 ),
                 _make_order(
-                    order_id="taker-sell",
+                    order_id="sell-jan",
                     ts=datetime(2026, 1, 1, 2, 0, tzinfo=timezone.utc),
                     side=OrderSide.SELL,
                     price="1100",
@@ -62,28 +94,12 @@ def test_calculate_pnl_summary_intervals() -> None:
                     post_only=False,
                 ),
                 _make_order(
-                    order_id="maker-sell-week",
-                    ts=datetime(2025, 12, 28, 0, 0, tzinfo=timezone.utc),
-                    side=OrderSide.SELL,
-                    price="900",
-                    size="1",
-                    post_only=True,
-                ),
-                _make_order(
-                    order_id="taker-buy-month",
-                    ts=datetime(2025, 12, 5, 0, 0, tzinfo=timezone.utc),
+                    order_id="buy-open",
+                    ts=datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc),
                     side=OrderSide.BUY,
-                    price="800",
+                    price="1200",
                     size="1",
                     post_only=False,
-                ),
-                _make_order(
-                    order_id="maker-sell-year",
-                    ts=datetime(2025, 2, 1, 0, 0, tzinfo=timezone.utc),
-                    side=OrderSide.SELL,
-                    price="700",
-                    size="1",
-                    post_only=True,
                 ),
                 _make_order(
                     order_id="ignored-2024",
@@ -110,19 +126,21 @@ def test_calculate_pnl_summary_intervals() -> None:
         by_key = {interval.key: interval for interval in summary.intervals}
 
         assert by_key["24h"].profit_before_fees == Decimal("100")
-        assert by_key["24h"].profit_after_fees == Decimal("95.8500")
+        assert by_key["24h"].profit_after_fees == Decimal("94.05")
+        assert by_key["24h"].maker_volume == Decimal("1000")
+        assert by_key["24h"].taker_volume == Decimal("2300")
 
-        assert by_key["7d"].profit_before_fees == Decimal("1000")
-        assert by_key["7d"].profit_after_fees == Decimal("993.6000")
+        assert by_key["7d"].profit_before_fees == Decimal("200")
+        assert by_key["7d"].profit_after_fees == Decimal("190.6")
 
         assert by_key["30d"].profit_before_fees == Decimal("200")
-        assert by_key["30d"].profit_after_fees == Decimal("192.4000")
+        assert by_key["30d"].profit_after_fees == Decimal("190.6")
 
-        assert by_key["365d"].profit_before_fees == Decimal("900")
-        assert by_key["365d"].profit_after_fees == Decimal("890.6500")
+        assert by_key["365d"].profit_before_fees == Decimal("400")
+        assert by_key["365d"].profit_after_fees == Decimal("387.5")
 
-        assert summary.total_profit_before_fees == Decimal("900")
-        assert summary.total_profit_after_fees == Decimal("890.6500")
+        assert summary.total_profit_before_fees == Decimal("400")
+        assert summary.total_profit_after_fees == Decimal("387.5")
     finally:
         engine.dispose()
 
@@ -146,4 +164,3 @@ def test_calculate_pnl_summary_handles_no_orders() -> None:
         assert all(interval.profit_after_fees == Decimal("0") for interval in summary.intervals)
     finally:
         engine.dispose()
-

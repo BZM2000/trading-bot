@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -53,11 +54,12 @@ def calculate_pnl_summary(
 
     aware_now = _ensure_aware(now or datetime.now(timezone.utc))
     trades = _load_trades(session, product_id=product_id)
+    entries = _build_entries(trades)
 
     intervals: list[IntervalMetrics] = []
     for key, label, delta in _timeframes():
         start = _effective_start(aware_now, delta)
-        metrics = _summarise_interval(trades, start=start)
+        metrics = _summarise_interval(entries, start=start)
         intervals.append(
             IntervalMetrics(
                 key=key,
@@ -152,29 +154,88 @@ class _RawMetrics:
     profit_after_fees: Decimal
 
 
-def _summarise_interval(trades: Sequence[TradeSnapshot], *, start: datetime) -> _RawMetrics:
+def _build_entries(trades: Sequence[TradeSnapshot]) -> list["_PnLEntry"]:
+    long_lots: deque[_Lot] = deque()
+    short_lots: deque[_Lot] = deque()
+    entries: list[_PnLEntry] = []
+
+    zero = Decimal("0")
+
+    for trade in trades:
+        remaining = trade.size
+        realized = Decimal("0")
+
+        if trade.side is models.OrderSide.BUY:
+            while remaining > zero and short_lots:
+                lot = short_lots[0]
+                matched = remaining if remaining <= lot.size else lot.size
+                realized += (lot.price - trade.price) * matched
+                lot.size -= matched
+                remaining -= matched
+                if lot.size <= zero:
+                    short_lots.popleft()
+            if remaining > zero:
+                long_lots.append(_Lot(price=trade.price, size=remaining))
+        else:
+            while remaining > zero and long_lots:
+                lot = long_lots[0]
+                matched = remaining if remaining <= lot.size else lot.size
+                realized += (trade.price - lot.price) * matched
+                lot.size -= matched
+                remaining -= matched
+                if lot.size <= zero:
+                    long_lots.popleft()
+            if remaining > zero:
+                short_lots.append(_Lot(price=trade.price, size=remaining))
+
+        notional = trade.price * trade.size
+        maker_volume = notional if trade.post_only else zero
+        taker_volume = notional if not trade.post_only else zero
+        fee_rate = MAKER_FEE_RATE if trade.post_only else TAKER_FEE_RATE
+        fee = notional * fee_rate
+
+        entries.append(
+            _PnLEntry(
+                timestamp=trade.timestamp,
+                realized_profit=realized,
+                maker_volume=maker_volume,
+                taker_volume=taker_volume,
+                fee=fee,
+            )
+        )
+
+    return entries
+
+
+@dataclass(slots=True)
+class _Lot:
+    price: Decimal
+    size: Decimal
+
+
+@dataclass(slots=True)
+class _PnLEntry:
+    timestamp: datetime
+    realized_profit: Decimal
+    maker_volume: Decimal
+    taker_volume: Decimal
+    fee: Decimal
+
+
+def _summarise_interval(entries: Sequence["_PnLEntry"], *, start: datetime) -> _RawMetrics:
     profit_before = Decimal("0")
     maker_volume = Decimal("0")
     taker_volume = Decimal("0")
+    fee_total = Decimal("0")
 
-    for trade in trades:
-        if trade.timestamp < start:
+    for entry in entries:
+        if entry.timestamp < start:
             continue
+        profit_before += entry.realized_profit
+        maker_volume += entry.maker_volume
+        taker_volume += entry.taker_volume
+        fee_total += entry.fee
 
-        notional = trade.price * trade.size
-        if trade.side is models.OrderSide.SELL:
-            profit_before += notional
-        else:
-            profit_before -= notional
-
-        if trade.post_only:
-            maker_volume += notional
-        else:
-            taker_volume += notional
-
-    maker_fees = maker_volume * MAKER_FEE_RATE
-    taker_fees = taker_volume * TAKER_FEE_RATE
-    fee_total = maker_fees + taker_fees
     profit_after = profit_before - fee_total
 
     return _RawMetrics(
