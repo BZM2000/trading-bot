@@ -280,6 +280,23 @@ def record_price_snapshot(session: Session, record: PriceSnapshotRecord) -> mode
     return snapshot
 
 
+def record_pnl_snapshot(
+    session: Session,
+    *,
+    product_id: str,
+    summary_json: dict[str, Any],
+    ts: Optional[datetime] = None,
+) -> models.PnLSnapshot:
+    snapshot = models.PnLSnapshot(
+        ts=ts or datetime.now(timezone.utc),
+        product_id=product_id,
+        summary_json=summary_json,
+    )
+    session.add(snapshot)
+    session.flush()
+    return snapshot
+
+
 def list_open_orders(session: Session, *, product_id: Optional[str] = None) -> list[models.OpenOrder]:
     statement = select(models.OpenOrder)
     if product_id:
@@ -343,3 +360,13 @@ def recent_executed_orders(
 def recent_run_logs(session: Session, limit: int = 20) -> list[models.RunLog]:
     statement = select(models.RunLog).order_by(models.RunLog.started_at.desc()).limit(limit)
     return list(session.scalars(statement))
+
+
+def latest_pnl_snapshot(session: Session, product_id: str) -> Optional[models.PnLSnapshot]:
+    statement = (
+        select(models.PnLSnapshot)
+        .where(models.PnLSnapshot.product_id == product_id)
+        .order_by(models.PnLSnapshot.ts.desc())
+        .limit(1)
+    )
+    return session.scalars(statement).first()

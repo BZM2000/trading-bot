@@ -17,6 +17,7 @@ from app.coinbase import (
     PlannedOrder,
     ProductConstraints,
 )
+from app.dashboard import pnl
 from app.coinbase.validators import round_size
 from app.config import Settings, get_settings
 from app.db import RunKind, RunStatus, session_scope
@@ -117,6 +118,30 @@ class SchedulerOrchestrator:
                     logger.exception("Two-hour job failed")
                     self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
                     raise
+
+    async def run_pnl_refresh(self) -> None:
+        usage = UsageTracker()
+        run_id = self._start_run(RunKind.MANUAL, "pnl-refresh")
+        try:
+            async with CoinbaseClient(settings=self.settings) as client:
+                summary = await pnl.calculate_pnl_summary(client, product_id=self.settings.product_id)
+            summary_json = pnl.summary_to_json(summary)
+            with session_scope(self.settings) as session:
+                crud.record_pnl_snapshot(
+                    session,
+                    product_id=self.settings.product_id,
+                    summary_json=summary_json,
+                )
+            self._finish_run(
+                run_id,
+                RunStatus.SUCCESS,
+                usage,
+                extra={"snapshot_ts": datetime.now(timezone.utc).isoformat()},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("PnL refresh failed")
+            self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
+            raise
 
     async def _execute_two_hourly(self, run_id: int, usage: UsageTracker, triggered_by: str) -> None:
         history, executed_summary = self._load_two_hour_context()

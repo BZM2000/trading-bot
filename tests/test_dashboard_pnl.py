@@ -13,8 +13,8 @@ def _ts(year: int, month: int, day: int, hour: int = 0) -> datetime:
 
 def test_summarise_trades_intervals() -> None:
     trades = [
-        pnl.TradeSnapshot(timestamp=_ts(2025, 2, 1), side=OrderSide.BUY, price=Decimal("700"), size=Decimal("1"), post_only=True),
-        pnl.TradeSnapshot(timestamp=_ts(2025, 3, 1), side=OrderSide.SELL, price=Decimal("900"), size=Decimal("1"), post_only=False),
+        pnl.TradeSnapshot(timestamp=_ts(2025, 9, 5), side=OrderSide.BUY, price=Decimal("700"), size=Decimal("1"), post_only=True),
+        pnl.TradeSnapshot(timestamp=_ts(2025, 9, 5, 4), side=OrderSide.SELL, price=Decimal("900"), size=Decimal("1"), post_only=False),
         pnl.TradeSnapshot(timestamp=_ts(2025, 12, 28), side=OrderSide.BUY, price=Decimal("800"), size=Decimal("1"), post_only=False),
         pnl.TradeSnapshot(timestamp=_ts(2025, 12, 29), side=OrderSide.SELL, price=Decimal("900"), size=Decimal("1"), post_only=True),
         pnl.TradeSnapshot(timestamp=_ts(2026, 1, 1, 1), side=OrderSide.BUY, price=Decimal("1000"), size=Decimal("1"), post_only=True),
@@ -54,3 +54,18 @@ def test_summarise_trades_handles_empty() -> None:
     assert summary.total_profit_after_fees == Decimal("0")
     assert all(interval.profit_before_fees == Decimal("0") for interval in summary.intervals)
     assert all(interval.profit_after_fees == Decimal("0") for interval in summary.intervals)
+
+
+def test_summary_serialisation_round_trip() -> None:
+    trades = [
+        pnl.TradeSnapshot(timestamp=_ts(2025, 9, 5), side=OrderSide.BUY, price=Decimal("1000"), size=Decimal("1"), post_only=False),
+        pnl.TradeSnapshot(timestamp=_ts(2025, 9, 5, 2), side=OrderSide.SELL, price=Decimal("1100"), size=Decimal("1"), post_only=True),
+    ]
+    summary = pnl.summarise_trades(trades, now=_ts(2025, 9, 6))
+    payload = pnl.summary_to_json(summary)
+    restored = pnl.summary_from_json(payload)
+
+    assert restored.total_profit_before_fees == summary.total_profit_before_fees
+    assert restored.total_profit_after_fees == summary.total_profit_after_fees
+    assert len(restored.intervals) == len(summary.intervals)
+    assert restored.intervals[0].profit_before_fees == summary.intervals[0].profit_before_fees

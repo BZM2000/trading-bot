@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 from app.coinbase.client import CoinbaseClient
 from app.coinbase.exec import parse_decimal, parse_side, parse_datetime
@@ -13,7 +13,7 @@ from app.db import models
 
 MAKER_FEE_RATE = Decimal("0.0025")
 TAKER_FEE_RATE = Decimal("0.0015")
-CUTOFF_TS = datetime(2025, 1, 1, tzinfo=timezone.utc)
+CUTOFF_TS = datetime(2025, 9, 1, tzinfo=timezone.utc)
 
 
 @dataclass(slots=True)
@@ -71,6 +71,49 @@ def empty_summary(now: Optional[datetime] = None) -> PNLSummary:
     """Return a zeroed summary, useful when API access is unavailable."""
 
     return summarise_trades((), now=now)
+
+
+def summary_to_json(summary: PNLSummary) -> dict[str, Any]:
+    return {
+        "intervals": [
+            {
+                "key": interval.key,
+                "label": interval.label,
+                "profit_before_fees": str(interval.profit_before_fees),
+                "maker_volume": str(interval.maker_volume),
+                "taker_volume": str(interval.taker_volume),
+                "fee_total": str(interval.fee_total),
+                "profit_after_fees": str(interval.profit_after_fees),
+            }
+            for interval in summary.intervals
+        ],
+        "total_profit_before_fees": str(summary.total_profit_before_fees),
+        "total_profit_after_fees": str(summary.total_profit_after_fees),
+    }
+
+
+def summary_from_json(payload: dict[str, Any]) -> PNLSummary:
+    intervals_payload = payload.get("intervals", [])
+    intervals: list[IntervalMetrics] = []
+    for item in intervals_payload:
+        intervals.append(
+            IntervalMetrics(
+                key=str(item.get("key", "")),
+                label=str(item.get("label", "")),
+                profit_before_fees=Decimal(item.get("profit_before_fees", "0")),
+                maker_volume=Decimal(item.get("maker_volume", "0")),
+                taker_volume=Decimal(item.get("taker_volume", "0")),
+                fee_total=Decimal(item.get("fee_total", "0")),
+                profit_after_fees=Decimal(item.get("profit_after_fees", "0")),
+            )
+        )
+    total_before = Decimal(payload.get("total_profit_before_fees", "0"))
+    total_after = Decimal(payload.get("total_profit_after_fees", "0"))
+    return PNLSummary(
+        intervals=intervals,
+        total_profit_before_fees=total_before,
+        total_profit_after_fees=total_after,
+    )
 
 
 def _summarise_trades(trades: Sequence[TradeSnapshot], *, now: datetime) -> PNLSummary:

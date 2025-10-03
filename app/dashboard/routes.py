@@ -112,9 +112,27 @@ async def status_partial(request: Request) -> HTMLResponse:
 
 
 async def _resolve_pnl_summary(settings: Settings) -> pnl.PNLSummary:
+    with session_scope(settings) as session:
+        snapshot = crud.latest_pnl_snapshot(session, settings.product_id)
+        if snapshot:
+            try:
+                return pnl.summary_from_json(snapshot.summary_json)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception(
+                    "Failed to parse stored PnL summary", extra={"snapshot_id": snapshot.id}
+                )
+    summary: pnl.PNLSummary
     try:
         async with CoinbaseClient(settings=settings) as client:
-            return await pnl.calculate_pnl_summary(client, product_id=settings.product_id)
+            summary = await pnl.calculate_pnl_summary(client, product_id=settings.product_id)
+        summary_json = pnl.summary_to_json(summary)
+        with session_scope(settings) as session:
+            crud.record_pnl_snapshot(
+                session,
+                product_id=settings.product_id,
+                summary_json=summary_json,
+            )
+        return summary
     except Exception:
         logger.exception("Failed to load PnL summary from Coinbase", extra={"product_id": settings.product_id})
         return pnl.empty_summary()

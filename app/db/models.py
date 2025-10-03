@@ -146,6 +146,15 @@ class PriceSnapshot(Base):
     mid: Mapped[Decimal] = mapped_column(NUMERIC_18_8, nullable=False)
 
 
+class PnLSnapshot(Base):
+    __tablename__ = "pnl_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    product_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 class DailyPlan(Base):
     __tablename__ = "daily_plans"
 

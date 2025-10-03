@@ -25,6 +25,11 @@ async def fill_poller_job(app: FastAPI) -> None:
     await orchestrator.run_fill_poller()
 
 
+async def pnl_refresh_job(app: FastAPI) -> None:
+    orchestrator = get_orchestrator(app)
+    await orchestrator.run_pnl_refresh()
+
+
 def register_jobs(scheduler: AsyncIOScheduler, app: FastAPI) -> None:
     scheduler.add_job(
         daily_job,
@@ -40,6 +45,13 @@ def register_jobs(scheduler: AsyncIOScheduler, app: FastAPI) -> None:
         id="fill_poller",
         replace_existing=True,
     )
+    scheduler.add_job(
+        pnl_refresh_job,
+        trigger=IntervalTrigger(hours=6),
+        kwargs={"app": app},
+        id="pnl_refresh",
+        replace_existing=True,
+    )
 
 
 @router.post("/daily")
@@ -51,4 +63,10 @@ async def force_daily(request: Request) -> dict[str, str]:
 @router.post("/2h")
 async def force_two_hour(request: Request) -> dict[str, str]:
     await two_hourly_job(request.app, triggered_by="manual")
+    return {"status": "ok"}
+
+
+@router.post("/pnl")
+async def force_pnl(request: Request) -> dict[str, str]:
+    await pnl_refresh_job(request.app)
     return {"status": "ok"}
