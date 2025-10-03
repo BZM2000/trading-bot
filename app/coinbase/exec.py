@@ -243,6 +243,7 @@ class ExecutionService:
                 )
                 stop_price = None
                 end_time = completed_time or submitted
+                post_only_flag = False
             else:
                 limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")
                 stop_price = parse_decimal(config.get("stop_price"))
@@ -251,6 +252,15 @@ class ExecutionService:
                     or parse_datetime(order.get("expire_time"))
                     or submitted
                 )
+                raw_post_only = config.get("post_only") if isinstance(config, dict) else None
+                if isinstance(raw_post_only, str):
+                    post_only_flag = raw_post_only.lower() == "true"
+                elif isinstance(raw_post_only, bool):
+                    post_only_flag = raw_post_only
+                else:
+                    post_only_flag = False
+                if config_type != "limit":
+                    post_only_flag = False
 
             if status == OrderStatus.OPEN:
                 open_records.append(
@@ -282,6 +292,7 @@ class ExecutionService:
                     end_time=end_time,
                     product_id=product,
                     stop_price=stop_price,
+                    post_only=post_only_flag,
                 )
             )
 

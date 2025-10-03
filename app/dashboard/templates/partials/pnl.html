@@ -1,0 +1,30 @@
+<section>
+  <h2>PnL Overview</h2>
+  {% if pnl_summary and pnl_summary.intervals %}
+  <table>
+    <thead>
+      <tr>
+        <th>Window</th>
+        <th>Profit (Before Fees)</th>
+        <th>Profit (After Fees)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for interval in pnl_summary.intervals %}
+      <tr>
+        <td>{{ interval.label }}</td>
+        <td>${{ '{:,.2f}'.format(interval.profit_before_fees) }}</td>
+        <td>${{ '{:,.2f}'.format(interval.profit_after_fees) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>
+    <strong>Total Profit Since 2025:</strong>
+    ${{ '{:,.2f}'.format(pnl_summary.total_profit_before_fees) }} (before fees) ·
+    ${{ '{:,.2f}'.format(pnl_summary.total_profit_after_fees) }} (after fees)
+  </p>
+  {% else %}
+  <p>No executed orders since 2025.</p>
+  {% endif %}
+</section>

@@ -47,6 +47,7 @@ class ExecutedOrderRecord:
     product_id: str
     stop_price: Optional[Decimal] = None
     ts_submitted_inferred: bool = False
+    post_only: Optional[bool] = None
 
 
 @dataclass(slots=True)
@@ -188,6 +189,7 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
             prev_status = order.status
             prev_filled = order.filled_size
             prev_filled_time = order.ts_filled
+            prev_post_only = getattr(order, "post_only", None)
 
             if not (record.ts_submitted_inferred and order.ts_submitted):
                 order.ts_submitted = record.ts_submitted
@@ -201,12 +203,14 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
             order.end_time = record.end_time
             order.product_id = record.product_id
             order.stop_price = record.stop_price
+            order.post_only = record.post_only
 
             if (
                 order.status != prev_status
                 or order.filled_size != prev_filled
                 or order.ts_filled != prev_filled_time
                 or order.stop_price != record.stop_price
+                or order.post_only != prev_post_only
             ):
                 changed.add(order.order_id)
         else:
@@ -224,6 +228,7 @@ def upsert_executed_orders(session: Session, records: Sequence[ExecutedOrderReco
                     end_time=record.end_time,
                     product_id=record.product_id,
                     stop_price=record.stop_price,
+                    post_only=record.post_only,
                 )
             )
             changed.add(record.order_id)

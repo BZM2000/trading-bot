@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, Enum, Integer, JSON, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -110,6 +110,7 @@ class ExecutedOrder(Base):
     client_order_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     product_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    post_only: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class OpenOrder(Base):

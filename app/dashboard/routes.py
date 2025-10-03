@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config import Settings, get_settings
+from app.dashboard import pnl
 from app.db import crud, session_scope
 from app.db.models import OrderStatus
 
@@ -60,6 +61,7 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
         run_logs = crud.recent_run_logs(session, limit=25)
         portfolio = crud.latest_portfolio_snapshot(session)
         price = crud.latest_price_snapshot(session, settings.product_id)
+        pnl_summary = pnl.calculate_pnl_summary(session, product_id=settings.product_id)
     return {
         "daily_plan": daily_plan,
         "two_hour_plan": two_hour_plan,
@@ -69,6 +71,7 @@ def _load_common_context(settings: Settings) -> Dict[str, Any]:
         "portfolio": portfolio,
         "price": price,
         "settings": settings,
+        "pnl_summary": pnl_summary,
     }
 
 
