@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from app.coinbase.client import CoinbaseClient
 from app.coinbase.exec import parse_decimal, parse_side, parse_datetime
-from app.db import models
+from app import pnl_native
+from app.db import crud, models
+from app.db.session import session_scope
 
 
 MAKER_FEE_RATE = Decimal("0.0025")
 TAKER_FEE_RATE = Decimal("0.0015")
 CUTOFF_TS = datetime(2025, 9, 1, tzinfo=timezone.utc)
+
+logger = logging.getLogger("dashboard.pnl")
 
 
 @dataclass(slots=True)
@@ -43,6 +49,26 @@ class PNLSummary:
     total_profit_after_fees: Decimal
 
 
+def _model_to_snapshot(model: models.PnLTrade) -> TradeSnapshot:
+    return TradeSnapshot(
+        timestamp=_ensure_aware(model.trade_time),
+        side=model.side,
+        price=model.price,
+        size=model.size,
+        post_only=bool(model.post_only),
+    )
+
+
+def _record_to_snapshot(record: crud.PnLTradeRecord) -> TradeSnapshot:
+    return TradeSnapshot(
+        timestamp=_ensure_aware(record.trade_time),
+        side=record.side,
+        price=record.price,
+        size=record.size,
+        post_only=record.post_only,
+    )
+
+
 async def calculate_pnl_summary(
     client: CoinbaseClient,
     *,
@@ -52,8 +78,33 @@ async def calculate_pnl_summary(
     """Hydrate PnL summary using Coinbase fills since 2025."""
 
     aware_now = _ensure_aware(now or datetime.now(timezone.utc))
-    trades = await _load_trades_from_api(client, product_id=product_id, start_anchor=CUTOFF_TS)
-    return _summarise_trades(trades, now=aware_now)
+    with session_scope() as session:
+        cached_models = crud.list_pnl_trades(
+            session,
+            product_id=product_id,
+            start_ts=CUTOFF_TS,
+        )
+        cached_snapshots = [_model_to_snapshot(model) for model in cached_models]
+        known_fill_ids = {model.fill_id for model in cached_models}
+
+    new_records, new_snapshots = await _load_trades_from_api(
+        client,
+        product_id=product_id,
+        start_anchor=CUTOFF_TS,
+        known_fill_ids=known_fill_ids,
+    )
+
+    if new_records:
+        with session_scope() as session:
+            inserted = crud.upsert_pnl_trades(session, new_records)
+        if inserted:
+            logger.info("Cached %s new PnL trades", inserted)
+
+    if new_snapshots:
+        cached_snapshots.extend(new_snapshots)
+
+    cached_snapshots.sort(key=lambda trade: trade.timestamp)
+    return summarise_trades(cached_snapshots, now=aware_now)
 
 
 def summarise_trades(
@@ -64,7 +115,11 @@ def summarise_trades(
     """Summarise already-fetched trades into interval metrics."""
 
     aware_now = _ensure_aware(now or datetime.now(timezone.utc))
-    return _summarise_trades(trades, now=aware_now)
+    ordered = sorted(trades, key=lambda trade: trade.timestamp)
+    native_payload = _summarise_trades_native(ordered, now=aware_now)
+    if native_payload is not None:
+        return summary_from_json(native_payload)
+    return _summarise_trades_python(ordered, now=aware_now)
 
 
 def empty_summary(now: Optional[datetime] = None) -> PNLSummary:
@@ -116,7 +171,57 @@ def summary_from_json(payload: dict[str, Any]) -> PNLSummary:
     )
 
 
-def _summarise_trades(trades: Sequence[TradeSnapshot], *, now: datetime) -> PNLSummary:
+def _summarise_trades_native(
+    trades: Sequence[TradeSnapshot],
+    *,
+    now: datetime,
+) -> Optional[dict[str, Any]]:
+    if not pnl_native.native_available():
+        return None
+    payload = [_trade_to_native(trade) for trade in trades]
+    if not payload:
+        # No trades means the native module can short circuit with an empty payload.
+        # We still call into native if available to keep behaviour aligned.
+        payload = []
+
+    result = pnl_native.summarise_trades(
+        payload,
+        list(_native_interval_specs()),
+        now_timestamp_us=_to_microseconds(now),
+        cutoff_timestamp_us=_to_microseconds(CUTOFF_TS),
+        maker_fee_rate=str(MAKER_FEE_RATE),
+        taker_fee_rate=str(TAKER_FEE_RATE),
+    )
+    return result
+
+
+def _trade_to_native(trade: TradeSnapshot) -> Mapping[str, Any]:
+    return {
+        "timestamp_us": _to_microseconds(trade.timestamp),
+        "side": trade.side.value,
+        "price": str(trade.price),
+        "size": str(trade.size),
+        "post_only": trade.post_only,
+    }
+
+
+def _native_interval_specs() -> Iterable[Mapping[str, Any]]:
+    for key, label, delta in _timeframes():
+        yield {
+            "key": key,
+            "label": label,
+            "delta_seconds": int(delta.total_seconds()) if delta else None,
+        }
+
+
+def _to_microseconds(ts: datetime) -> int:
+    aware = _ensure_aware(ts)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = aware - epoch
+    return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+def _summarise_trades_python(trades: Sequence[TradeSnapshot], *, now: datetime) -> PNLSummary:
     entries = _build_entries(trades)
 
     intervals: list[IntervalMetrics] = []
@@ -165,9 +270,12 @@ async def _load_trades_from_api(
     *,
     product_id: str,
     start_anchor: datetime,
-) -> list[TradeSnapshot]:
-    trades: list[TradeSnapshot] = []
+    known_fill_ids: set[str],
+) -> tuple[list[crud.PnLTradeRecord], list[TradeSnapshot]]:
+    records: list[crud.PnLTradeRecord] = []
+    snapshots: list[TradeSnapshot] = []
     cursor: Optional[str] = None
+    seen_fill_ids = set(known_fill_ids)
 
     while True:
         payload = await client.list_fills(
@@ -193,6 +301,13 @@ async def _load_trades_from_api(
                 stop_pagination = True
                 continue
 
+            fill_id = _extract_fill_identifier(fill)
+            if fill_id is None:
+                continue
+            if fill_id in seen_fill_ids:
+                stop_pagination = True
+                continue
+
             side = parse_side(fill.get("order_side") or fill.get("side"))
             size = parse_decimal(fill.get("size") or fill.get("base_size"))
             price = parse_decimal(fill.get("price") or fill.get("unit_price") or fill.get("average_price"))
@@ -204,22 +319,31 @@ async def _load_trades_from_api(
             liquidity = str(fill.get("liquidity_indicator") or fill.get("liquidity") or "").upper()
             post_only = liquidity == "MAKER"
 
-            trades.append(
-                TradeSnapshot(
-                    timestamp=ts,
-                    side=side,
-                    price=price,
-                    size=size,
-                    post_only=post_only,
-                )
+            order_id = fill.get("order_id")
+            if order_id is not None:
+                order_id = str(order_id)
+
+            record = crud.PnLTradeRecord(
+                fill_id=fill_id,
+                order_id=order_id,
+                product_id=product_id,
+                trade_time=ts,
+                side=side,
+                price=price,
+                size=size,
+                post_only=post_only,
+                raw_json=fill,
             )
+            records.append(record)
+            snapshots.append(_record_to_snapshot(record))
+            seen_fill_ids.add(fill_id)
 
         cursor = payload.get("cursor")
         if not cursor or stop_pagination:
             break
 
-    trades.sort(key=lambda trade: trade.timestamp)
-    return trades
+    snapshots.sort(key=lambda trade: trade.timestamp)
+    return records, snapshots
 
 
 @dataclass(slots=True)
@@ -337,3 +461,21 @@ def _effective_start(now: datetime, delta: Optional[timedelta]) -> datetime:
     if candidate < CUTOFF_TS:
         return CUTOFF_TS
     return candidate
+
+
+def _extract_fill_identifier(fill: Mapping[str, Any]) -> Optional[str]:
+    for key in ("fill_id", "entry_id", "order_fill_id", "trade_id"):
+        value = fill.get(key)
+        if value:
+            return str(value)
+
+    order_id = str(fill.get("order_id") or "").strip()
+    trade_time = str(fill.get("trade_time") or fill.get("time") or "").strip()
+    price = str(fill.get("price") or fill.get("unit_price") or fill.get("average_price") or "").strip()
+    size = str(fill.get("size") or fill.get("base_size") or "").strip()
+
+    if not (order_id and trade_time and price and size):
+        return None
+
+    fingerprint = f"{order_id}:{trade_time}:{price}:{size}"
+    return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()

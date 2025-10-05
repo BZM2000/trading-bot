@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 from typing import Any, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
+from app import pnl_native
 from app.coinbase.client import CoinbaseClient
 from app.coinbase.validators import (
     ProductConstraints,
@@ -20,6 +22,9 @@ from app.coinbase.validators import (
 )
 from app.db import crud
 from app.db.models import OrderSide, OrderStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 class OrderType(str, Enum):
@@ -200,101 +205,29 @@ class ExecutionService:
             limit=200,
         )
         fills_payload = await self.client.list_fills(product_id=product, limit=200)
-        fills_by_order: dict[str, list[dict]] = {}
-        for fill in fills_payload:
-            order_id = fill.get("order_id")
-            if not order_id:
-                continue
-            fills_by_order.setdefault(order_id, []).append(fill)
+        open_records: list[crud.OpenOrderRecord]
+        executed_records: list[crud.ExecutedOrderRecord]
 
-        open_records: list[crud.OpenOrderRecord] = []
-        executed_records: list[crud.ExecutedOrderRecord] = []
-
-        for order in orders_payload:
-            order_id = order.get("order_id")
-            if not order_id:
-                continue
-            status_str = (order.get("status") or order.get("order_status") or "").upper()
-            status = STATUS_MAP.get(status_str, OrderStatus.NEW)
-            config_type, config = self._extract_order_config(order)
-            if config is None:
-                continue
-
-            client_order_id = order.get("client_order_id", "")
-            side = parse_side(order.get("side"))
-
-            fills = fills_by_order.get(order_id, [])
-            filled_size = sum_fills(fills)
-            completed_time = parse_datetime(order.get("completed_time")) if status != OrderStatus.OPEN else None
-            if not completed_time and fills:
-                completed_time = parse_datetime(fills[-1].get("trade_time"))
-            submitted, submitted_inferred = resolve_submitted_time(order, fills, completed_time)
-
-            base_size_value = config.get("base_size") or config.get("base_order_size")
-            base_size = parse_decimal(base_size_value) or Decimal("0")
-            if base_size == 0 and filled_size:
-                base_size = filled_size
-
-            if config_type == "market":
-                limit_price = (
-                    average_fill_price(fills)
-                    or parse_decimal(order.get("average_filled_price"))
-                    or Decimal("0")
-                )
-                stop_price = None
-                end_time = completed_time or submitted
-                post_only_flag = False
-            else:
-                limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")
-                stop_price = parse_decimal(config.get("stop_price"))
-                end_time = (
-                    parse_datetime(config.get("end_time"))
-                    or parse_datetime(order.get("expire_time"))
-                    or submitted
-                )
-                raw_post_only = config.get("post_only") if isinstance(config, dict) else None
-                if isinstance(raw_post_only, str):
-                    post_only_flag = raw_post_only.lower() == "true"
-                elif isinstance(raw_post_only, bool):
-                    post_only_flag = raw_post_only
-                else:
-                    post_only_flag = False
-                if config_type != "limit":
-                    post_only_flag = False
-
-            if status == OrderStatus.OPEN:
-                open_records.append(
-                    crud.OpenOrderRecord(
-                        order_id=order_id,
-                        side=side,
-                        limit_price=limit_price,
-                        base_size=base_size,
-                        status=status,
-                        client_order_id=client_order_id,
-                        end_time=end_time,
-                        product_id=product,
-                        stop_price=stop_price,
-                    )
-                )
-
-            executed_records.append(
-                crud.ExecutedOrderRecord(
-                    order_id=order_id,
-                    ts_submitted=submitted,
-                    ts_submitted_inferred=submitted_inferred,
-                    ts_filled=completed_time,
-                    side=side,
-                    limit_price=limit_price,
-                    base_size=base_size,
-                    status=status,
-                    filled_size=filled_size,
-                    client_order_id=client_order_id,
-                    end_time=end_time,
+        native_payload: dict[str, Any] | None = None
+        if pnl_native.native_available():
+            try:
+                native_payload = pnl_native.process_orders_and_fills(
+                    orders_payload,
+                    fills_payload,
                     product_id=product,
-                    stop_price=stop_price,
-                    post_only=post_only_flag,
                 )
-            )
+            except Exception:  # pragma: no cover - defensive fallback
+                logger.exception("Native order processing failed; reverting to Python implementation")
+                native_payload = None
+
+        if native_payload is not None:
+            if isinstance(native_payload, dict):
+                open_records, executed_records = _records_from_native(native_payload, product)
+            else:
+                native_payload = None
+        if native_payload is None:
+            open_records, executed_records = _build_records_python(orders_payload, fills_payload, product)
+
 
         crud.replace_open_orders(session, open_records)
         changed_ids = crud.upsert_executed_orders(session, executed_records)
@@ -307,7 +240,8 @@ class ExecutionService:
     def _stop_direction(self, order: PlannedOrder) -> str:
         return "STOP_DIRECTION_STOP_UP" if order.side == OrderSide.BUY else "STOP_DIRECTION_STOP_DOWN"
 
-    def _extract_order_config(self, order: dict) -> tuple[str, Optional[dict]]:
+    @staticmethod
+    def _extract_order_config(order: dict) -> tuple[str, Optional[dict]]:
         config = order.get("order_configuration", {})
         if not isinstance(config, dict):
             return ("unknown", None)
@@ -328,6 +262,182 @@ class ExecutionService:
                 return ("market", value)
 
         return ("unknown", None)
+
+
+def _records_from_native(payload: dict[str, Any], default_product_id: str) -> tuple[list[crud.OpenOrderRecord], list[crud.ExecutedOrderRecord]]:
+    open_records: list[crud.OpenOrderRecord] = []
+    executed_records: list[crud.ExecutedOrderRecord] = []
+
+    for record in payload.get("open_records", []):
+        order_id = record.get("order_id")
+        if not order_id:
+            continue
+        side = parse_side(record.get("side"))
+        limit_price = parse_decimal(record.get("limit_price")) or Decimal("0")
+        base_size = parse_decimal(record.get("base_size")) or Decimal("0")
+        status_value = str(record.get("status", "")).upper()
+        status = STATUS_MAP.get(status_value, OrderStatus.NEW)
+        client_order_id = str(record.get("client_order_id") or "")
+        end_time = parse_datetime(record.get("end_time")) or datetime.now(timezone.utc)
+        product = str(record.get("product_id") or default_product_id)
+        stop_price = parse_decimal(record.get("stop_price"))
+        open_records.append(
+            crud.OpenOrderRecord(
+                order_id=order_id,
+                side=side,
+                limit_price=limit_price,
+                base_size=base_size,
+                status=status,
+                client_order_id=client_order_id,
+                end_time=end_time,
+                product_id=product,
+                stop_price=stop_price,
+            )
+        )
+
+    for record in payload.get("executed_records", []):
+        order_id = record.get("order_id")
+        if not order_id:
+            continue
+        side = parse_side(record.get("side"))
+        limit_price = parse_decimal(record.get("limit_price")) or Decimal("0")
+        base_size = parse_decimal(record.get("base_size")) or Decimal("0")
+        status_value = str(record.get("status", "")).upper()
+        status = STATUS_MAP.get(status_value, OrderStatus.NEW)
+        client_order_id = str(record.get("client_order_id") or "")
+        ts_submitted = parse_datetime(record.get("ts_submitted")) or datetime.now(timezone.utc)
+        end_time = parse_datetime(record.get("end_time")) or ts_submitted
+        product = str(record.get("product_id") or default_product_id)
+        stop_price = parse_decimal(record.get("stop_price"))
+        filled_size = parse_decimal(record.get("filled_size"))
+        ts_filled = parse_datetime(record.get("ts_filled"))
+        ts_submitted_inferred = bool(record.get("ts_submitted_inferred", False))
+        post_only = bool(record.get("post_only", False))
+
+        executed_records.append(
+            crud.ExecutedOrderRecord(
+                order_id=order_id,
+                ts_submitted=ts_submitted,
+                ts_submitted_inferred=ts_submitted_inferred,
+                ts_filled=ts_filled,
+                side=side,
+                limit_price=limit_price,
+                base_size=base_size,
+                status=status,
+                filled_size=filled_size,
+                client_order_id=client_order_id,
+                end_time=end_time,
+                product_id=product,
+                stop_price=stop_price,
+                post_only=post_only,
+            )
+        )
+
+    return open_records, executed_records
+
+
+def _build_records_python(
+    orders_payload: Sequence[dict[str, Any]],
+    fills_payload: Sequence[dict[str, Any]],
+    product: str,
+) -> tuple[list[crud.OpenOrderRecord], list[crud.ExecutedOrderRecord]]:
+    fills_by_order: dict[str, list[dict[str, Any]]] = {}
+    for fill in fills_payload:
+        order_id = fill.get("order_id")
+        if not order_id:
+            continue
+        fills_by_order.setdefault(order_id, []).append(fill)
+
+    open_records: list[crud.OpenOrderRecord] = []
+    executed_records: list[crud.ExecutedOrderRecord] = []
+
+    for order in orders_payload:
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+        status_str = (order.get("status") or order.get("order_status") or "").upper()
+        status = STATUS_MAP.get(status_str, OrderStatus.NEW)
+        config_type, config = ExecutionService._extract_order_config(order)
+        if config is None:
+            continue
+
+        client_order_id = order.get("client_order_id", "")
+        side = parse_side(order.get("side"))
+
+        fills = fills_by_order.get(order_id, [])
+        filled_size = sum_fills(fills)
+        completed_time = parse_datetime(order.get("completed_time")) if status != OrderStatus.OPEN else None
+        if not completed_time and fills:
+            completed_time = parse_datetime(fills[-1].get("trade_time"))
+        submitted, submitted_inferred = resolve_submitted_time(order, fills, completed_time)
+
+        base_size_value = config.get("base_size") or config.get("base_order_size")
+        base_size = parse_decimal(base_size_value) or Decimal("0")
+        if base_size == 0 and filled_size:
+            base_size = filled_size
+
+        if config_type == "market":
+            limit_price = (
+                average_fill_price(fills)
+                or parse_decimal(order.get("average_filled_price"))
+                or Decimal("0")
+            )
+            stop_price = None
+            end_time = completed_time or submitted
+            post_only_flag = False
+        else:
+            limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")
+            stop_price = parse_decimal(config.get("stop_price"))
+            end_time = (
+                parse_datetime(config.get("end_time"))
+                or parse_datetime(order.get("expire_time"))
+                or submitted
+            )
+            raw_post_only = config.get("post_only") if isinstance(config, dict) else None
+            if isinstance(raw_post_only, str):
+                post_only_flag = raw_post_only.lower() == "true"
+            elif isinstance(raw_post_only, bool):
+                post_only_flag = raw_post_only
+            else:
+                post_only_flag = False
+            if config_type != "limit":
+                post_only_flag = False
+
+        if status == OrderStatus.OPEN:
+            open_records.append(
+                crud.OpenOrderRecord(
+                    order_id=order_id,
+                    side=side,
+                    limit_price=limit_price,
+                    base_size=base_size,
+                    status=status,
+                    client_order_id=client_order_id,
+                    end_time=end_time,
+                    product_id=product,
+                    stop_price=stop_price,
+                )
+            )
+
+        executed_records.append(
+            crud.ExecutedOrderRecord(
+                order_id=order_id,
+                ts_submitted=submitted,
+                ts_submitted_inferred=submitted_inferred,
+                ts_filled=completed_time,
+                side=side,
+                limit_price=limit_price,
+                base_size=base_size,
+                status=status,
+                filled_size=filled_size,
+                client_order_id=client_order_id,
+                end_time=end_time,
+                product_id=product,
+                stop_price=stop_price,
+                post_only=post_only_flag,
+            )
+        )
+
+    return open_records, executed_records
 
 
 def parse_datetime(value: Optional[str]) -> Optional[datetime]:

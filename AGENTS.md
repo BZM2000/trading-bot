@@ -8,8 +8,6 @@ The entrypoint is `app/main.py`, which wires FastAPI, the APScheduler orchestrat
 - `pip install -r requirements.txt` — install runtime and test dependencies.
 - `uvicorn app.main:app --reload` — start the API, dashboard, and scheduler; auto-migrations run when enabled.
 - `alembic -c alembic.ini upgrade head` — apply migrations manually if auto-run is disabled.
-- `pytest` — execute the unit suite; keep `LLM_STUB_MODE=true` to avoid live OpenAI calls.
-- `docker build -t trading-bot .` then `docker run --env-file .env -p 8000:8000 trading-bot` — optional container workflow.
 
 ## Coding Style & Naming Conventions
 Follow PEP 8 with 4-space indents and explicit type hints, matching `app/main.py` and `app/config.py`. Keep module and function names `snake_case`, classes `PascalCase`, and extend existing Pydantic models for new settings or payloads. Prefer absolute imports via the `app.` package and use `app.logging` utilities to keep JSON logs consistent.
@@ -21,4 +19,7 @@ Tests live in `tests/test_*.py` and use pytest. Mirror new modules with targeted
 History favours conventional commits (`fix: normalise candle timestamps`). Write imperative subjects under 72 characters and keep each commit scoped. Pull requests should include a brief behaviour summary, linked issues, configuration or migration callouts, screenshots for dashboard changes, and test evidence (`pytest`, manual `/force/*` trigger). Highlight follow-up work for reviewer awareness.
 
 ## Security & Configuration Tips
-Secrets belong in `.env` copied from `.env.example`; never commit them. Use `app.db.url_normaliser` to coerce database URLs and prefer the default SQLite database for local work. Keep `EXECUTION_ENABLED=false` until you are ready for live orders, rotate Coinbase credentials when enabling it, and document new env vars or scheduler jobs in the README.
+Secrets belong in `.env` copied from `.env.example`; never commit them. Use `app.db.url_normaliser` to coerce database URLs and prefer the default SQLite database for local work. This is a live working trading bot deployed on railway.com. Any change can be deployed to railway through railway CLI which is installed and authenticated and ready to use. 
+
+## Adding New Database Tables
+Define a SQLAlchemy model in `app/db/models.py`, scaffold an Alembic migration under `app/db/migrations/versions`, and add CRUD wrappers plus targeted tests (usually in `tests/test_db_migrate.py`). Keep enum names stable, reuse existing helpers in `app/db/crud.py`, and document build steps if the change affects deployment automation.

@@ -98,6 +98,17 @@ pytest
 
 Ensure `LLM_STUB_MODE=true` and `EXECUTION_ENABLED=false` in your `.env` so tests do not call external services or place orders.
 
+## Native Extensions
+
+The project ships optional Rust helpers for PnL aggregation and order/fill reconciliation. Build them locally with [maturin](https://github.com/PyO3/maturin):
+
+```bash
+pip install maturin
+maturin develop -m app/pnl_native/Cargo.toml
+```
+
+When the native module is not compiled the Python fallback remains active, so deployments without Rust tooling continue to function.
+
 ## Docker
 
 Build and run the container image for parity with production deployments:

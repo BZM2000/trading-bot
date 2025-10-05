@@ -78,6 +78,19 @@ class PriceSnapshotRecord:
     mid: Decimal
 
 
+@dataclass(slots=True)
+class PnLTradeRecord:
+    fill_id: str
+    order_id: Optional[str]
+    product_id: str
+    trade_time: datetime
+    side: models.OrderSide
+    price: Decimal
+    size: Decimal
+    post_only: bool
+    raw_json: Optional[dict[str, Any]]
+
+
 def log_run_start(session: Session, kind: models.RunKind, *, usage_json: Optional[dict[str, Any]] = None) -> models.RunLog:
     run = models.RunLog(kind=kind, usage_json=usage_json)
     session.add(run)
@@ -278,6 +291,54 @@ def record_price_snapshot(session: Session, record: PriceSnapshotRecord) -> mode
     session.add(snapshot)
     session.flush()
     return snapshot
+
+
+def upsert_pnl_trades(session: Session, trades: Sequence[PnLTradeRecord]) -> int:
+    inserted = 0
+    for trade in trades:
+        existing = session.get(models.PnLTrade, trade.fill_id)
+        if existing:
+            continue
+        session.add(
+            models.PnLTrade(
+                fill_id=trade.fill_id,
+                order_id=trade.order_id,
+                product_id=trade.product_id,
+                trade_time=trade.trade_time,
+                side=trade.side,
+                price=trade.price,
+                size=trade.size,
+                post_only=trade.post_only,
+                raw_json=trade.raw_json,
+            )
+        )
+        inserted += 1
+    if inserted:
+        session.flush()
+    return inserted
+
+
+def list_pnl_trades(
+    session: Session,
+    *,
+    product_id: str,
+    start_ts: Optional[datetime] = None,
+) -> list[models.PnLTrade]:
+    statement = select(models.PnLTrade).where(models.PnLTrade.product_id == product_id)
+    if start_ts:
+        statement = statement.where(models.PnLTrade.trade_time >= start_ts)
+    statement = statement.order_by(models.PnLTrade.trade_time.asc())
+    return list(session.scalars(statement))
+
+
+def latest_pnl_trade(session: Session, *, product_id: str) -> Optional[models.PnLTrade]:
+    statement = (
+        select(models.PnLTrade)
+        .where(models.PnLTrade.product_id == product_id)
+        .order_by(models.PnLTrade.trade_time.desc())
+        .limit(1)
+    )
+    return session.scalars(statement).first()
 
 
 def record_pnl_snapshot(

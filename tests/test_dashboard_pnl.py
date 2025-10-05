@@ -69,3 +69,26 @@ def test_summary_serialisation_round_trip() -> None:
     assert restored.total_profit_after_fees == summary.total_profit_after_fees
     assert len(restored.intervals) == len(summary.intervals)
     assert restored.intervals[0].profit_before_fees == summary.intervals[0].profit_before_fees
+
+
+def test_extract_fill_identifier_prefers_primary_id() -> None:
+    fill = {
+        "fill_id": "abc123",
+        "order_id": "order-1",
+        "trade_time": "2025-10-01T00:00:00Z",
+        "price": "100",
+        "size": "0.5",
+    }
+    assert pnl._extract_fill_identifier(fill) == "abc123"
+
+
+def test_extract_fill_identifier_hashes_when_missing_id() -> None:
+    fill = {
+        "order_id": "order-1",
+        "trade_time": "2025-10-01T00:00:00Z",
+        "price": "100",
+        "size": "0.5",
+    }
+    fingerprint = pnl._extract_fill_identifier(fill)
+    assert fingerprint is not None
+    assert len(fingerprint) == 40

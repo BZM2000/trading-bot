@@ -164,6 +164,21 @@ class DailyPlan(Base):
     machine_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
 
+class PnLTrade(Base):
+    __tablename__ = "pnl_trades"
+
+    fill_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    order_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    product_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    trade_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    side: Mapped[OrderSide] = mapped_column(Enum(OrderSide, name="pnl_trade_side"), nullable=False)
+    price: Mapped[Decimal] = mapped_column(NUMERIC_18_8, nullable=False)
+    size: Mapped[Decimal] = mapped_column(NUMERIC_18_8, nullable=False)
+    post_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    raw_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    inserted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class TwoHourPlan(Base):
     __tablename__ = "two_hour_plans"
 
