@@ -130,3 +130,51 @@ def test_model3_market_order_defaults_post_only_false() -> None:
     assert order.order_type is OrderType.MARKET
     assert order.post_only is False
     assert order.stop_price is None
+
+
+def test_model3_trigger_bracket_round_trip() -> None:
+    payload = {
+        "orders": [
+            {
+                "side": "SELL",
+                "limit_price": "2150",
+                "base_size": "0.06",
+                "order_type": "trigger_bracket",
+                "stop_price": "1950",
+            }
+        ]
+    }
+
+    response = Model3Response.model_validate(payload)
+    planned = response.to_planned_orders()
+    assert len(planned) == 1
+    order = planned[0]
+    assert order.order_type is OrderType.TRIGGER_BRACKET
+    assert order.side == OrderSide.SELL
+    assert order.post_only is False
+    assert order.stop_price == Decimal("1950")
+
+
+def test_model3_trigger_bracket_requires_sell_side() -> None:
+    with pytest.raises(ValidationError):
+        Model3Order.model_validate(
+            {
+                "side": "BUY",
+                "limit_price": "2100",
+                "base_size": "0.05",
+                "order_type": "trigger_bracket",
+                "stop_price": "1950",
+            }
+        )
+
+
+def test_model3_trigger_bracket_requires_stop_price() -> None:
+    with pytest.raises(ValidationError):
+        Model3Order.model_validate(
+            {
+                "side": "SELL",
+                "limit_price": "2100",
+                "base_size": "0.05",
+                "order_type": "trigger_bracket",
+            }
+        )

@@ -126,6 +126,59 @@ def test_market_order_validation_and_payload(execution_service: ExecutionService
     assert Decimal(market_cfg["base_size"]) == Decimal("0.05")
 
 
+def test_trigger_bracket_validation(execution_service: ExecutionService) -> None:
+    end_time = datetime.now(timezone.utc) + timedelta(hours=2)
+    order = PlannedOrder(
+        side=OrderSide.SELL,
+        limit_price=Decimal("2100"),
+        base_size=Decimal("0.05"),
+        end_time=end_time,
+        post_only=False,
+        stop_price=Decimal("1900"),
+        order_type=OrderType.TRIGGER_BRACKET,
+    )
+
+    validated = execution_service._validate_orders([order], mid_price=Decimal("2000"))
+    assert len(validated) == 1
+    assert validated[0].order_type is OrderType.TRIGGER_BRACKET
+    assert validated[0].post_only is False
+    assert validated[0].stop_price == Decimal("1900")
+
+
+def test_trigger_bracket_requires_sell_side(execution_service: ExecutionService) -> None:
+    end_time = datetime.now(timezone.utc) + timedelta(hours=2)
+    order = PlannedOrder(
+        side=OrderSide.BUY,
+        limit_price=Decimal("2100"),
+        base_size=Decimal("0.05"),
+        end_time=end_time,
+        stop_price=Decimal("1900"),
+        order_type=OrderType.TRIGGER_BRACKET,
+    )
+
+    with pytest.raises(ValueError):
+        execution_service._validate_orders([order], mid_price=Decimal("2000"))
+
+
+def test_trigger_bracket_payload_build(execution_service: ExecutionService) -> None:
+    end_time = datetime.now(timezone.utc) + timedelta(hours=2)
+    order = PlannedOrder(
+        side=OrderSide.SELL,
+        limit_price=Decimal("2100"),
+        base_size=Decimal("0.05"),
+        end_time=end_time,
+        stop_price=Decimal("1900"),
+        order_type=OrderType.TRIGGER_BRACKET,
+    )
+
+    validated = execution_service._validate_orders([order], mid_price=Decimal("2000"))
+    payload = execution_service._build_payload(validated[0])
+    config = payload["order_configuration"]["trigger_bracket_gtd"]
+    assert Decimal(config["limit_price"]) == Decimal("2100")
+    assert Decimal(config["stop_trigger_price"]) == Decimal("1900")
+    assert Decimal(config["base_size"]) == Decimal("0.05")
+
+
 def test_resolve_submitted_time_uses_created_when_missing_submitted() -> None:
     created = "2024-07-12T09:15:30Z"
     order = {"created_time": created}

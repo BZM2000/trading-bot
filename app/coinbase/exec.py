@@ -31,6 +31,7 @@ class OrderType(str, Enum):
     LIMIT = "limit"
     STOP_LIMIT = "stop_limit"
     MARKET = "market"
+    TRIGGER_BRACKET = "trigger_bracket"
 
 
 @dataclass(slots=True)
@@ -115,7 +116,7 @@ class ExecutionService:
                 continue
 
             if order.limit_price is None:
-                raise ValueError("Limit price must be provided for limit and stop-limit orders")
+                raise ValueError("Limit price must be provided for limit, stop-limit, and trigger bracket orders")
 
             if order.order_type == OrderType.LIMIT and order.stop_price is not None:
                 raise ValueError("Limit orders must omit stop price")
@@ -142,6 +143,34 @@ class ExecutionService:
                         post_only=False,
                         stop_price=stop_price,
                         order_type=OrderType.STOP_LIMIT,
+                    )
+                )
+                continue
+
+            if order.order_type == OrderType.TRIGGER_BRACKET:
+                if order.side != OrderSide.SELL:
+                    raise ValueError("Trigger bracket orders are only supported for SELL side")
+                if order.stop_price is None:
+                    raise ValueError("Trigger bracket orders require a stop price")
+
+                stop_price = round_stop_price(order.stop_price, self.constraints, order.side)
+                limit_price = round_price(order.limit_price, self.constraints, order.side)
+
+                enforce_min_distance(limit_price, mid_price, self.constraints, order.side)
+                enforce_stop_distance(stop_price, mid_price, self.constraints, order.side)
+
+                if stop_price >= limit_price:
+                    raise ValueError("Trigger bracket orders require limit price above stop price")
+
+                validated.append(
+                    PlannedOrder(
+                        side=order.side,
+                        limit_price=limit_price,
+                        base_size=size,
+                        end_time=order.end_time,
+                        post_only=False,
+                        stop_price=stop_price,
+                        order_type=OrderType.TRIGGER_BRACKET,
                     )
                 )
                 continue
@@ -183,6 +212,15 @@ class ExecutionService:
                     "stop_price": str(order.stop_price),
                     "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                     "stop_direction": self._stop_direction(order),
+                }
+            }
+        elif order.order_type == OrderType.TRIGGER_BRACKET:
+            payload["order_configuration"] = {
+                "trigger_bracket_gtd": {
+                    "base_size": str(order.base_size),
+                    "limit_price": str(order.limit_price),
+                    "stop_trigger_price": str(order.stop_price),
+                    "end_time": order.end_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
             }
         else:
@@ -260,6 +298,11 @@ class ExecutionService:
             value = config.get(key)
             if value:
                 return ("market", value)
+
+        for key in ("trigger_bracket_gtd", "trigger_bracket_gtc"):
+            value = config.get(key)
+            if value:
+                return ("trigger_bracket", value)
 
         return ("unknown", None)
 
@@ -384,6 +427,18 @@ def _build_records_python(
             )
             stop_price = None
             end_time = completed_time or submitted
+            post_only_flag = False
+        elif config_type == "trigger_bracket":
+            limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")
+            stop_price = (
+                parse_decimal(config.get("stop_trigger_price"))
+                or parse_decimal(config.get("stop_price"))
+            )
+            end_time = (
+                parse_datetime(config.get("end_time"))
+                or parse_datetime(order.get("expire_time"))
+                or submitted
+            )
             post_only_flag = False
         else:
             limit_price = parse_decimal(config.get("limit_price")) or Decimal("0")

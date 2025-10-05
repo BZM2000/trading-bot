@@ -16,9 +16,9 @@ class Model3Order(BaseModel):
     limit_price: Decimal = Field(gt=Decimal("0"), description="Limit price in quote currency")
     base_size: Decimal = Field(gt=Decimal("0"), description="Order size in base currency")
     post_only: Optional[bool] = Field(default=None, description="Whether the order must remain maker-only")
-    order_type: Literal["limit", "stop_limit", "market"] = Field(
+    order_type: Literal["limit", "stop_limit", "market", "trigger_bracket"] = Field(
         default="limit",
-        description="Execution style: classic limit, stop-limit, or market order",
+        description="Execution style: limit, stop-limit, market, or trigger bracket order",
     )
     stop_price: Optional[Decimal] = Field(
         default=None,
@@ -44,6 +44,16 @@ class Model3Order(BaseModel):
                 raise ValueError("Market orders must omit stop_price")
             if self.post_only is True:
                 raise ValueError("Market orders cannot be post-only")
+            object.__setattr__(self, "post_only", False)
+        elif self.order_type == "trigger_bracket":
+            if self.stop_price is None:
+                raise ValueError("Trigger bracket orders require stop_price")
+            if self.post_only is True:
+                raise ValueError("Trigger bracket orders cannot be post-only")
+            if self.side != "SELL":
+                raise ValueError("Trigger bracket orders must use the SELL side")
+            if self.limit_price <= self.stop_price:
+                raise ValueError("Trigger bracket orders require limit_price above stop_price")
             object.__setattr__(self, "post_only", False)
         return self
 

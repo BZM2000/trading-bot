@@ -417,6 +417,7 @@ fn collect_fills(fills: &[RawFill]) -> HashMap<String, Vec<FillData>> {
 enum OrderConfigType {
     Limit,
     StopLimit,
+    TriggerBracket,
     Market,
     Unknown,
 }
@@ -435,6 +436,12 @@ fn extract_order_config<'a>(value: Option<&'a Value>) -> (OrderConfigType, Optio
     for key in ["stop_limit_stop_limit_gtd", "stop_limit_stop_limit_gtc"] {
         if let Some(entry) = container.get(key).and_then(|v| v.as_object()) {
             return (OrderConfigType::StopLimit, Some(entry));
+        }
+    }
+
+    for key in ["trigger_bracket_gtd", "trigger_bracket_gtc"] {
+        if let Some(entry) = container.get(key).and_then(|v| v.as_object()) {
+            return (OrderConfigType::TriggerBracket, Some(entry));
         }
     }
 
@@ -625,6 +632,16 @@ fn process_orders_internal(
                     .unwrap_or_else(|| Decimal::ZERO);
                 let end_time = completed_time.or(Some(submitted_time));
                 (limit_price, None, end_time, false)
+            }
+            OrderConfigType::TriggerBracket => {
+                let limit_price = decimal_from_value(config.get("limit_price"))
+                    .unwrap_or_else(|| Decimal::ZERO);
+                let stop_price = decimal_from_value(config.get("stop_trigger_price"))
+                    .or_else(|| decimal_from_value(config.get("stop_price")));
+                let end_time = parse_datetime_value(config.get("end_time"))
+                    .or(expire_time)
+                    .or(Some(submitted_time));
+                (limit_price, stop_price, end_time, false)
             }
             OrderConfigType::StopLimit => {
                 let limit_price = decimal_from_value(config.get("limit_price"))
