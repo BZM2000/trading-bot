@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 
-MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for a 0.5% round-trip trading fee, highlighting only edges that clear this hurdle. When fresh macro or market context would improve your plan, call the `web_search` tool before you respond."""
+MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for trading fees (≈0.15% if maker, ≈0.25% if taker) and highlight only edges that clear those hurdles. When fresh macro or market context would improve your plan, call the `web_search` tool before you respond."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. Evaluate limit, stop-limit, market, and SELL trigger bracket orders on equal footing and choose the style that best fits the thesis. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours (market orders execute immediately), so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are 0.5%% round-trip, so gross moves under ~1%% net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC. Whenever current market, news, or regulatory context would sharpen your decision, call the `web_search` tool before finalising your order."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. Evaluate limit, stop-limit, market, and SELL trigger bracket orders on equal footing and choose the style that best fits the thesis. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours (market orders execute immediately), so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are ≈0.15%% when the order is guaranteed maker and ≈0.25%% when taker risk exists, so gross moves under those hurdles net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC. Whenever current market, news, or regulatory context would sharpen your decision, call the `web_search` tool before finalising your order."""
 
 MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Support limit, stop-limit, market, and SELL trigger bracket orders, returning at most one order marked for a 2-hour GTD window (market orders execute immediately). Do not invent orders."""
 
@@ -47,7 +47,7 @@ def build_model1_user_prompt(context: Model1Context) -> str:
         "\nExecuted orders in the last 7 days:",
         executed or "(no executions)",
         "\nInstructions: produce today's 24-hour ETH-USDC plan.",
-        "Explicitly factor in the 0.5% round-trip trading fee when setting targets, sizing, and risk tolerances.",
+        "Explicitly factor in fee drag (≈0.15% if maker, ≈0.25% if taker) when setting targets, sizing, and risk tolerances.",
         "Toolkit: the executor can stage GTD limit, stop-limit, market, and SELL trigger bracket orders. Use stop-limits for moves that must cross the mid-price before entering, market orders when immediate execution is essential, and trigger brackets when you must pair a take-profit with a protective stop on existing inventory.",
         "Provide a sizing guide for the next 24 hours that expresses recommended position sizes as percentages of overall trading capital (e.g., \"risk up to 3% of total funds on momentum longs\").",
         "Do not reference current portfolio balances; keep recommendations at the strategy level and proportional to total capital rather than absolute coin amounts.",
@@ -78,7 +78,7 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",
-        "- Always leave at least 0.5 USDC uncommitted after fees. Treat usable USDC for sizing as max(CURRENT available USDC − 0.5, 0) and ensure limit_price * base_size * 1.005 stays within that budget; if the cushion leaves under the 10 USDC notional minimum, skip the BUY idea.",
+        "- Fee awareness: post_only=true LIMIT orders typically pay ≈0.15%, while scenarios with taker exposure (MARKET, STOP-LIMIT, SELL trigger bracket, or post_only=false LIMIT) pay ≈0.25%. The executor handles sizing cushions—focus on ideas whose edge remains after those fees on either BUY or SELL.",
         "- Use only the CURRENT balances in the portfolio snapshot; do not assume fills or transfers.",
         "Execution styles (consider every option evenly and justify why your pick fits the thesis):",
         "- LIMIT: Maker-style GTD order. BUY limits must sit at least the minimum distance below the mid and SELL limits at least the same distance above it. Set `post_only=true` when you want to guarantee maker execution, otherwise toggle it off.",
@@ -86,10 +86,9 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "- MARKET: Immediate IOC execution at the best available price. Supply the current reference price in `limit_price` for sizing transparency and always set `post_only=false`.",
         "- SELL TRIGGER BRACKET: Pair a take-profit limit and a protective stop in one order. Requires existing ETH inventory, a SELL side, the limit at least the minimum distance above the mid, and the stop at least the same distance below it. Always set `post_only=false`.",
         "- When a plan level violates the distance or balance rules, adjust it to the nearest allowed price or drop the order entirely.",
-        "- Account for 0.5% trading fees: avoid trades whose probable reward after fees is negligible (≈1% gross ≈ break-even).",
+        "- Account for realistic fee drag: ≈0.15% for maker fills and ≈0.25% for taker fills; avoid trades whose probable reward after fees is negligible.",
         "- Every order must clear the 10 USDC notional minimum; resize or skip if that conflicts with balances or risk limits.",
         "- Take-profit or protective follow-ups are usually staged after fills; SELL trigger brackets are the only bundled exception.",
-        "- State the 2-hour GTD window explicitly and skip ideas unlikely to trigger within it.",
         "If any constraint prevents an order, explain why and omit that side.",
     ]
     return "\n".join(prompt)

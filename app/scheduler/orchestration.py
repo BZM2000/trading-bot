@@ -32,8 +32,8 @@ from app.llm.usage import UsageTracker
 logger = logging.getLogger("scheduler.orchestrator")
 
 MIN_ORDER_NOTIONAL_USDC = Decimal("10")
-QUOTE_BUFFER_USDC = Decimal("0.5")
-ENTRY_FEE_RATE = Decimal("0.005")  # assume 0.5% entry fee for sizing safety
+MAKER_FEE_BUFFER_RATE = Decimal("0.0035")  # maker-style (post-only) cushion
+TAKER_FEE_BUFFER_RATE = Decimal("0.0075")  # taker-style cushion for stops/market
 MARKET_FOLLOW_UP_DELAY_SECONDS = 10
 
 
@@ -473,14 +473,13 @@ class SchedulerOrchestrator:
         if available_quote is None:
             return planned_orders
 
-        spend_cap = available_quote - QUOTE_BUFFER_USDC
+        spend_cap = available_quote
         if spend_cap <= Decimal("0"):
             if any(order.side is OrderSide.BUY for order in planned_orders):
                 logger.info(
-                    "Dropping BUY orders: insufficient USDC after applying buffer",
+                    "Dropping BUY orders: insufficient USDC after applying fee cushions",
                     extra={
                         "available_usdc": str(available_quote),
-                        "buffer_usdc": str(QUOTE_BUFFER_USDC),
                     },
                 )
             return [order for order in planned_orders if order.side is not OrderSide.BUY]
@@ -493,22 +492,23 @@ class SchedulerOrchestrator:
                 continue
 
             cost = order.limit_price * order.base_size
-            total_cost = cost * (Decimal("1") + ENTRY_FEE_RATE)
+            fee_rate = self._fee_buffer_rate(order)
+            total_cost = cost * (Decimal("1") + fee_rate)
             if total_cost <= remaining_cap:
                 adjusted_orders.append(order)
                 remaining_cap = max(remaining_cap - total_cost, Decimal("0"))
                 continue
 
-            denominator = order.limit_price * (Decimal("1") + ENTRY_FEE_RATE)
+            denominator = order.limit_price * (Decimal("1") + fee_rate)
             max_base = remaining_cap / denominator if denominator else Decimal("0")
             max_base = round_size(max_base, constraints)
             if max_base <= Decimal("0") or max_base < constraints.min_size:
                 logger.info(
-                    "Dropping BUY order: buffer reduces quote below minimum size",
+                    "Dropping BUY order: fee cushion reduces quote below minimum size",
                     extra={
                         "available_usdc": str(available_quote),
-                        "buffer_usdc": str(QUOTE_BUFFER_USDC),
                         "limit_price": str(order.limit_price),
+                        "fee_buffer_rate": str(fee_rate),
                     },
                 )
                 continue
@@ -525,10 +525,15 @@ class SchedulerOrchestrator:
                 )
             )
             adjusted_cost = order.limit_price * max_base
-            adjusted_total = adjusted_cost * (Decimal("1") + ENTRY_FEE_RATE)
+            adjusted_total = adjusted_cost * (Decimal("1") + fee_rate)
             remaining_cap = max(remaining_cap - adjusted_total, Decimal("0"))
 
         return adjusted_orders
+
+    def _fee_buffer_rate(self, order: PlannedOrder) -> Decimal:
+        if order.order_type is OrderType.LIMIT and order.post_only:
+            return MAKER_FEE_BUFFER_RATE
+        return TAKER_FEE_BUFFER_RATE
 
     def _available_quote_balance(self, balances: dict[str, Any]) -> Optional[Decimal]:
         quote_currency = self._quote_currency()
