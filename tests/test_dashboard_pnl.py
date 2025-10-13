@@ -30,21 +30,21 @@ def test_summarise_trades_intervals() -> None:
     by_key = {interval.key: interval for interval in summary.intervals}
 
     assert by_key["24h"].profit_before_fees == Decimal("100")
-    assert by_key["24h"].profit_after_fees == Decimal("94.05")
+    assert by_key["24h"].profit_after_fees == Decimal("92.75")
     assert by_key["24h"].maker_volume == Decimal("1000")
     assert by_key["24h"].taker_volume == Decimal("2300")
 
     assert by_key["7d"].profit_before_fees == Decimal("200")
-    assert by_key["7d"].profit_after_fees == Decimal("190.6")
+    assert by_key["7d"].profit_after_fees == Decimal("189.4")
 
     assert by_key["30d"].profit_before_fees == Decimal("200")
-    assert by_key["30d"].profit_after_fees == Decimal("190.6")
+    assert by_key["30d"].profit_after_fees == Decimal("189.4")
 
     assert by_key["365d"].profit_before_fees == Decimal("400")
-    assert by_key["365d"].profit_after_fees == Decimal("387.5")
+    assert by_key["365d"].profit_after_fees == Decimal("386.1")
 
     assert summary.total_profit_before_fees == Decimal("400")
-    assert summary.total_profit_after_fees == Decimal("387.5")
+    assert summary.total_profit_after_fees == Decimal("386.1")
 
 
 def test_summarise_trades_handles_empty() -> None:

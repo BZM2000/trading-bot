@@ -25,7 +25,7 @@ class Model3Order(BaseModel):
         gt=Decimal("0"),
         description="Stop trigger price in quote currency (required for stop-limit orders)",
     )
-    note: Optional[str] = Field(default=None, max_length=300, description="Short justification")
+    note: Optional[str] = Field(default=None, description="Short justification")
 
     @model_validator(mode="after")
     def validate_stop_configuration(self) -> "Model3Order":

@@ -15,8 +15,8 @@ from app.db import crud, models
 from app.db.session import session_scope
 
 
-MAKER_FEE_RATE = Decimal("0.0025")
-TAKER_FEE_RATE = Decimal("0.0015")
+MAKER_FEE_RATE = Decimal("0.0015")
+TAKER_FEE_RATE = Decimal("0.0025")
 CUTOFF_TS = datetime(2025, 9, 1, tzinfo=timezone.utc)
 
 logger = logging.getLogger("dashboard.pnl")

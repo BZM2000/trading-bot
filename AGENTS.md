@@ -12,6 +12,9 @@ The entrypoint is `app/main.py`, which wires FastAPI, the APScheduler orchestrat
 ## Coding Style & Naming Conventions
 Follow PEP 8 with 4-space indents and explicit type hints, matching `app/main.py` and `app/config.py`. Keep module and function names `snake_case`, classes `PascalCase`, and extend existing Pydantic models for new settings or payloads. Prefer absolute imports via the `app.` package and use `app.logging` utilities to keep JSON logs consistent.
 
+## LLM Prompt vs Execution Fee Buffers
+Prompts tell the models to assume ≈0.15% maker and ≈0.25% taker fees so they stay focused on high-level edges. The scheduler still applies internal safety cushions (0.35%/0.75%) when sizing BUY orders to cover real-world slippage and taker risk. This intentional mismatch keeps prompts simple while guarding execution.
+
 ## Testing Guidelines
 Tests live in `tests/test_*.py` and use pytest. Mirror new modules with targeted test files that cover validation, scheduler filters, and database helpers. Default `.env` should set `LLM_STUB_MODE=true` and `EXECUTION_ENABLED=false` so the suite runs offline. When migrations adjust schemas, update `tests/test_db_migrate.py` accordingly.
 
