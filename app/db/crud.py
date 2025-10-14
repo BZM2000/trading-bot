@@ -122,7 +122,7 @@ def save_prompt_history(
     kind: models.RunKind,
     record: PromptRecord,
 ) -> None:
-    if kind == models.RunKind.DAILY:
+    if kind == models.RunKind.PLAN:
         model = models.PromptHistoryDaily(
             ts=record.ts,
             prompt_text=record.prompt_text,
@@ -130,7 +130,7 @@ def save_prompt_history(
             compact_summary_500w=record.compact_summary_500w,
             sources_json=record.sources_json,
         )
-    elif kind == models.RunKind.TWO_HOURLY:
+    elif kind == models.RunKind.ORDER:
         model = models.PromptHistory2H(
             ts=record.ts,
             prompt_text=record.prompt_text,
@@ -152,8 +152,8 @@ def get_recent_prompt_history(
     limit: int = 7,
 ) -> list[Any]:
     table = {
-        models.RunKind.DAILY: models.PromptHistoryDaily,
-        models.RunKind.TWO_HOURLY: models.PromptHistory2H,
+        models.RunKind.PLAN: models.PromptHistoryDaily,
+        models.RunKind.ORDER: models.PromptHistory2H,
     }.get(kind)
 
     if table is None:

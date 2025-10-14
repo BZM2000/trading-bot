@@ -22,10 +22,10 @@ class Base(DeclarativeBase):
 
 
 class RunKind(str, enum.Enum):
-    DAILY = "daily"
-    TWO_HOURLY = "2h"
-    FIVE_MINUTE = "5m"
-    MANUAL = "manual"
+    PLAN = "plan"
+    ORDER = "order"
+    MONITOR = "monitor"
+    PNL = "pnl"
 
 
 class RunStatus(str, enum.Enum):

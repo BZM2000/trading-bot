@@ -52,8 +52,8 @@ def _select_latest_per_order(records: Iterable[Any], *, limit: int = 20) -> List
 
 async def _load_common_context(settings: Settings) -> Dict[str, Any]:
     with session_scope(settings) as session:
-        daily_plan = crud.latest_daily_plan(session)
-        two_hour_plan = crud.latest_two_hour_plan(session)
+        plan_snapshot = crud.latest_daily_plan(session)
+        order_plan = crud.latest_two_hour_plan(session)
         open_orders = crud.list_open_orders(session, product_id=settings.product_id)
         recent_executed = crud.recent_executed_orders(
             session,
@@ -72,8 +72,8 @@ async def _load_common_context(settings: Settings) -> Dict[str, Any]:
         price = crud.latest_price_snapshot(session, settings.product_id)
     pnl_summary = await _resolve_pnl_summary(settings)
     return {
-        "daily_plan": daily_plan,
-        "two_hour_plan": two_hour_plan,
+        "plan": plan_snapshot,
+        "order_plan": order_plan,
         "open_orders": open_orders,
         "recent_executed": recent_executed,
         "run_logs": run_logs,

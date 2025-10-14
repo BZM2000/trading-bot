@@ -31,7 +31,7 @@ def test_run_migrations_stamps_partial_schema(tmp_path):
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "20251005_0005"
+        assert version == "20251020_0006"
     finally:
         engine.dispose()
 

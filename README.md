@@ -8,7 +8,7 @@ Local-first orchestration layer for ETH-USDC trading strategies built on FastAPI
 
 - Multi-stage LLM planning pipeline (Model 1 → Model 2 → Model 3) with stub mode for offline development.
 - Coinbase Advanced Trade integrations for product metadata, order placement, fill synchronisation, and market data snapshots.
-- APScheduler-based job orchestration for daily strategy, two-hour tactical plans, and five-minute fill polling.
+- APScheduler-based job orchestration for plan, order, monitor, and PnL refresh cycles.
 - SQLAlchemy models with Alembic migrations for plans, prompts, orders, fills, price snapshots, and run logs.
 - HTMX dashboard surfacing current plans, open orders, portfolio state, and scheduler activity.
 
@@ -63,16 +63,18 @@ Additional toggles live in `app/config.py`; extend the Pydantic settings model i
 
 ## Scheduler Jobs & Manual Triggers
 
-- Daily strategy refresh at 00:00 UTC (Model 1).
-- Two-hour tactical plan generation and validation (Model 2 + Model 3 + execution pipeline).
-- Five-minute fill poller to capture fills placed outside the bot.
+- Plan process runs at 00:00 UTC to capture the daily market narrative (Model 1).
+- Order process executes the tactical plan pipeline (Model 2/3 + execution); it is scheduled indirectly via monitor runs and follow-ups.
+- Monitor process runs every minute to sync open orders and fills, and triggers the order process when the book is clear.
+- PnL process captures portfolio performance snapshots every six hours.
 
 Development-friendly endpoints allow manual execution:
 
-- `POST /force/daily`
-- `POST /force/2h`
+- `POST /force/plan`
+- `POST /force/order`
+- `POST /force/pnl`
 
-When market orders execute, the scheduler queues a follow-up run to capture the updated state.
+When market orders execute, the scheduler queues a follow-up order run to capture the updated state.
 
 ## Database & Migrations
 

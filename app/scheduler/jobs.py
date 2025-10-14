@@ -10,63 +10,63 @@ from app.scheduler.orchestration import get_orchestrator
 router = APIRouter(prefix="/force", tags=["scheduler"])
 
 
-async def daily_job(app: FastAPI) -> None:
+async def plan_job(app: FastAPI) -> None:
     orchestrator = get_orchestrator(app)
-    await orchestrator.run_daily()
+    await orchestrator.run_plan()
 
 
-async def two_hourly_job(app: FastAPI, *, triggered_by: str = "schedule") -> None:
+async def order_job(app: FastAPI, *, triggered_by: str = "schedule") -> None:
     orchestrator = get_orchestrator(app)
-    await orchestrator.run_two_hourly(triggered_by=triggered_by)
+    await orchestrator.run_order(triggered_by=triggered_by)
 
 
-async def fill_poller_job(app: FastAPI) -> None:
+async def monitor_job(app: FastAPI) -> None:
     orchestrator = get_orchestrator(app)
-    await orchestrator.run_fill_poller()
+    await orchestrator.run_monitor()
 
 
-async def pnl_refresh_job(app: FastAPI) -> None:
+async def pnl_job(app: FastAPI) -> None:
     orchestrator = get_orchestrator(app)
-    await orchestrator.run_pnl_refresh()
+    await orchestrator.run_pnl()
 
 
 def register_jobs(scheduler: AsyncIOScheduler, app: FastAPI) -> None:
     scheduler.add_job(
-        daily_job,
+        plan_job,
         trigger=CronTrigger(hour=0, minute=0),
         kwargs={"app": app},
-        id="daily_plan",
+        id="plan_process",
         replace_existing=True,
     )
     scheduler.add_job(
-        fill_poller_job,
-        trigger=IntervalTrigger(minutes=5),
+        monitor_job,
+        trigger=IntervalTrigger(minutes=1),
         kwargs={"app": app},
-        id="fill_poller",
+        id="monitor_process",
         replace_existing=True,
     )
     scheduler.add_job(
-        pnl_refresh_job,
+        pnl_job,
         trigger=IntervalTrigger(hours=6),
         kwargs={"app": app},
-        id="pnl_refresh",
+        id="pnl_process",
         replace_existing=True,
     )
 
 
-@router.post("/daily")
-async def force_daily(request: Request) -> dict[str, str]:
-    await daily_job(request.app)
+@router.post("/plan")
+async def force_plan(request: Request) -> dict[str, str]:
+    await plan_job(request.app)
     return {"status": "ok"}
 
 
-@router.post("/2h")
-async def force_two_hour(request: Request) -> dict[str, str]:
-    await two_hourly_job(request.app, triggered_by="manual")
+@router.post("/order")
+async def force_order(request: Request) -> dict[str, str]:
+    await order_job(request.app, triggered_by="manual")
     return {"status": "ok"}
 
 
 @router.post("/pnl")
 async def force_pnl(request: Request) -> dict[str, str]:
-    await pnl_refresh_job(request.app)
+    await pnl_job(request.app)
     return {"status": "ok"}

@@ -61,7 +61,7 @@ class SchedulerOrchestrator:
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
         self._planning_lock = asyncio.Lock()
-        self._two_hour_lock = asyncio.Lock()
+        self._order_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def _planning_guard(self, kind: RunKind, triggered_by: str):
@@ -77,12 +77,12 @@ class SchedulerOrchestrator:
         finally:
             self._planning_lock.release()
 
-    async def run_daily(self, *, triggered_by: str = "schedule") -> None:
-        async with self._planning_guard(RunKind.DAILY, triggered_by):
+    async def run_plan(self, *, triggered_by: str = "schedule") -> None:
+        async with self._planning_guard(RunKind.PLAN, triggered_by):
             usage = UsageTracker()
-            run_id = self._start_run(RunKind.DAILY, triggered_by)
+            run_id = self._start_run(RunKind.PLAN, triggered_by)
             try:
-                history, executed_summary = self._load_daily_context()
+                history, executed_summary = self._load_plan_context()
                 async with CoinbaseClient(settings=self.settings) as cb_client:
                     market_service = MarketService(cb_client)
                     snapshot = await market_service.current_snapshot(self.settings.product_id)
@@ -97,31 +97,30 @@ class SchedulerOrchestrator:
                     )
                     llm_result = await llm.run_model1(context)
                     summary_text = await summarise_to_500_words(llm, llm_result.text)
-
-                self._persist_daily_plan(context, llm_result, summary_text)
+                self._persist_plan(context, llm_result, summary_text)
                 self._finish_run(run_id, RunStatus.SUCCESS, usage, extra={"triggered_by": triggered_by})
             except Exception as exc:  # pragma: no cover - defensive
-                logger.exception("Daily job failed")
+                logger.exception("Plan job failed")
                 self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
                 raise
 
-    async def run_two_hourly(self, *, triggered_by: str = "schedule") -> None:
-        async with self._planning_guard(RunKind.TWO_HOURLY, triggered_by):
-            if not self._two_hour_lock.locked():
-                logger.info("Starting two-hour job", extra={"triggered_by": triggered_by})
-            async with self._two_hour_lock:
+    async def run_order(self, *, triggered_by: str = "schedule") -> None:
+        async with self._planning_guard(RunKind.ORDER, triggered_by):
+            if not self._order_lock.locked():
+                logger.info("Starting order job", extra={"triggered_by": triggered_by})
+            async with self._order_lock:
                 usage = UsageTracker()
-                run_id = self._start_run(RunKind.TWO_HOURLY, triggered_by)
+                run_id = self._start_run(RunKind.ORDER, triggered_by)
                 try:
-                    await self._execute_two_hourly(run_id, usage, triggered_by)
+                    await self._execute_order(run_id, usage, triggered_by)
                 except Exception as exc:  # pragma: no cover - defensive
-                    logger.exception("Two-hour job failed")
+                    logger.exception("Order job failed")
                     self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc), extra={"triggered_by": triggered_by})
                     raise
-
-    async def run_pnl_refresh(self) -> None:
+    
+    async def run_pnl(self) -> None:
         usage = UsageTracker()
-        run_id = self._start_run(RunKind.MANUAL, "pnl-refresh")
+        run_id = self._start_run(RunKind.PNL, "pnl-refresh")
         try:
             async with CoinbaseClient(settings=self.settings) as client:
                 summary = await pnl.calculate_pnl_summary(client, product_id=self.settings.product_id)
@@ -142,12 +141,12 @@ class SchedulerOrchestrator:
             logger.exception("PnL refresh failed")
             self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
             raise
-
-    async def _execute_two_hourly(self, run_id: int, usage: UsageTracker, triggered_by: str) -> None:
-        history, executed_summary = self._load_two_hour_context()
-        daily_plan_text = self._latest_daily_plan_text()
-        if daily_plan_text is None:
-            raise RuntimeError("Daily plan not found; model 2 cannot run")
+    
+    async def _execute_order(self, run_id: int, usage: UsageTracker, triggered_by: str) -> None:
+        history, executed_summary = self._load_order_context()
+        plan_text = self._latest_plan_text()
+        if plan_text is None:
+            raise RuntimeError("Plan not found; model 2 cannot run")
 
         async with CoinbaseClient(settings=self.settings) as cb_client:
             market_service = MarketService(cb_client)
@@ -165,7 +164,7 @@ class SchedulerOrchestrator:
                     market_snapshot_text = self._format_market_snapshot(market_snapshot)
                     constraints_text = self._format_constraints(constraints, market_snapshot.mid)
                     model2_context = Model2Context(
-                        daily_plan=daily_plan_text,
+                        daily_plan=plan_text,
                         recent_two_hour_history=history,
                         executed_orders_summary=executed_summary,
                         portfolio_snapshot=self._format_portfolio_snapshot(portfolio_balances),
@@ -194,7 +193,7 @@ class SchedulerOrchestrator:
                             history.insert(0, f"Previous run drifted at {datetime.now(timezone.utc).isoformat()}")
                             continue
 
-                    await self._persist_two_hour_plan(
+                    await self._persist_order_plan(
                         model2_context,
                         model2_result,
                         model3_response,
@@ -233,12 +232,12 @@ class SchedulerOrchestrator:
 
             raise RuntimeError("Model 2/3 failed to produce a plan after drift checks")
 
-    async def run_fill_poller(self) -> None:
+    async def run_monitor(self) -> None:
         new_fills: list[str] = []
         open_orders: list[crud.OpenOrderRecord] = []
-        async with self._planning_guard(RunKind.FIVE_MINUTE, "schedule"):
+        async with self._planning_guard(RunKind.MONITOR, "schedule"):
             usage = UsageTracker()
-            run_id = self._start_run(RunKind.FIVE_MINUTE, "schedule")
+            run_id = self._start_run(RunKind.MONITOR, "schedule")
             try:
                 async with CoinbaseClient(settings=self.settings) as cb_client:
                     execution = ExecutionService(
@@ -262,12 +261,12 @@ class SchedulerOrchestrator:
                     extra={"new_fills": new_fills},
                 )
             except Exception as exc:  # pragma: no cover - defensive
-                logger.exception("Fill poller failed")
+                logger.exception("Monitor job failed")
                 self._finish_run(run_id, RunStatus.FAILED, usage, error=str(exc))
                 raise
 
-        if not open_orders and not self._two_hour_lock.locked():
-            await self.run_two_hourly(triggered_by="no_open_orders")
+        if not open_orders and not self._order_lock.locked():
+            await self.run_order(triggered_by="no_open_orders")
 
     def _start_run(self, kind: RunKind, triggered_by: str) -> int:
         with session_scope(self.settings) as session:
@@ -304,9 +303,9 @@ class SchedulerOrchestrator:
                 usage_json=usage_payload,
             )
 
-    def _load_daily_context(self) -> tuple[list[str], list[str]]:
+    def _load_plan_context(self) -> tuple[list[str], list[str]]:
         with session_scope(self.settings) as session:
-            history_models = crud.get_recent_prompt_history(session, RunKind.DAILY, limit=7)
+            history_models = crud.get_recent_prompt_history(session, RunKind.PLAN, limit=7)
             executed_orders = crud.executed_orders_since(
                 session,
                 datetime.now(timezone.utc) - timedelta(days=7),
@@ -322,9 +321,9 @@ class SchedulerOrchestrator:
         executed_summary = [self._format_executed_order(order) for order in executed_orders]
         return history, executed_summary
 
-    def _load_two_hour_context(self) -> tuple[list[str], list[str]]:
+    def _load_order_context(self) -> tuple[list[str], list[str]]:
         with session_scope(self.settings) as session:
-            history_models = crud.get_recent_prompt_history(session, RunKind.TWO_HOURLY, limit=12)
+            history_models = crud.get_recent_prompt_history(session, RunKind.ORDER, limit=12)
             executed_orders = crud.recent_executed_orders(
                 session,
                 hours=24,
@@ -340,14 +339,14 @@ class SchedulerOrchestrator:
         executed_summary = [self._format_executed_order(order) for order in executed_orders]
         return history, executed_summary
 
-    def _persist_daily_plan(self, context: Model1Context, llm_result: LLMResult, summary_text: str) -> None:
+    def _persist_plan(self, context: Model1Context, llm_result: LLMResult, summary_text: str) -> None:
         now = datetime.now(timezone.utc)
         sources = self._extract_sources(llm_result.response)
         with session_scope(self.settings) as session:
             crud.save_daily_plan(session, crud.PlanRecord(ts=now, raw_text=llm_result.text, machine_json=None))
             crud.save_prompt_history(
                 session,
-                RunKind.DAILY,
+                RunKind.PLAN,
                 crud.PromptRecord(
                     ts=now,
                     prompt_text=prompts.build_model1_user_prompt(context),
@@ -357,7 +356,7 @@ class SchedulerOrchestrator:
                 ),
             )
 
-    async def _persist_two_hour_plan(
+    async def _persist_order_plan(
         self,
         context: Model2Context,
         model2_result: LLMResult,
@@ -382,7 +381,7 @@ class SchedulerOrchestrator:
             )
             crud.save_prompt_history(
                 session,
-                RunKind.TWO_HOURLY,
+                RunKind.ORDER,
                 crud.PromptRecord(
                     ts=now,
                     prompt_text=prompts.build_model2_user_prompt(context),
@@ -417,18 +416,18 @@ class SchedulerOrchestrator:
         return drift < self.settings.price_drift_pct
 
     def _schedule_market_followup(self, *, triggered_by: str) -> None:
-        async def _delayed_two_hourly() -> None:
+        async def _delayed_order() -> None:
             await asyncio.sleep(MARKET_FOLLOW_UP_DELAY_SECONDS)
             try:
-                await self.run_two_hourly(triggered_by=triggered_by)
+                await self.run_order(triggered_by=triggered_by)
             except Exception:  # pragma: no cover - defensive
-                logger.exception("Follow-up two-hour run after market order failed")
+                logger.exception("Follow-up order run after market order failed")
 
         logger.info(
-            "Scheduling follow-up two-hour run after market order",
+            "Scheduling follow-up order run after market order",
             extra={"triggered_by": triggered_by, "delay_seconds": MARKET_FOLLOW_UP_DELAY_SECONDS},
         )
-        asyncio.create_task(_delayed_two_hourly())
+        asyncio.create_task(_delayed_order())
 
     def _record_price_snapshot(self, snapshot) -> None:
         with session_scope(self.settings) as session:
@@ -443,7 +442,7 @@ class SchedulerOrchestrator:
                 ),
             )
 
-    def _latest_daily_plan_text(self) -> Optional[str]:
+    def _latest_plan_text(self) -> Optional[str]:
         with session_scope(self.settings) as session:
             plan = crud.latest_daily_plan(session)
             return plan.raw_text if plan else None

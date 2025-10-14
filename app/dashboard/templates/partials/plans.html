@@ -7,16 +7,16 @@
 >
   <h2>Plans</h2>
   <div>
-    <h3>Daily Plan {% if daily_plan %}<small>{{ daily_plan.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>{% endif %}</h3>
-    <pre>{% if daily_plan %}{{ daily_plan.raw_text }}{% else %}No daily plan recorded yet.{% endif %}</pre>
+    <h3>Plan {% if plan %}<small>{{ plan.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>{% endif %}</h3>
+    <pre>{% if plan %}{{ plan.raw_text }}{% else %}No plan recorded yet.{% endif %}</pre>
   </div>
   <div>
-    <h3>Two-Hour Plan {% if two_hour_plan %}<small>{{ two_hour_plan.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>{% endif %}</h3>
-    <pre>{% if two_hour_plan %}{{ two_hour_plan.raw_text }}{% else %}No two-hour plan recorded yet.{% endif %}</pre>
-    {% if two_hour_plan and two_hour_plan.machine_json %}
+    <h3>Order {% if order_plan %}<small>{{ order_plan.ts.strftime('%Y-%m-%d %H:%M') }} UTC</small>{% endif %}</h3>
+    <pre>{% if order_plan %}{{ order_plan.raw_text }}{% else %}No order plan recorded yet.{% endif %}</pre>
+    {% if order_plan and order_plan.machine_json %}
     <details>
       <summary>Model 3 Output</summary>
-      <pre>{{ two_hour_plan.machine_json | tojson(indent=2) }}</pre>
+      <pre>{{ order_plan.machine_json | tojson(indent=2) }}</pre>
     </details>
     {% endif %}
   </div>
