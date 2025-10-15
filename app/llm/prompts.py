@@ -6,7 +6,7 @@ from typing import Iterable
 
 MODEL_1_SYSTEM_PROMPT = """You are Model 1, a trading strategy planner focused on ETH-USDC. Deliver concise, structured daily plans with clear objectives, risk notes, and execution guidance. Always account for trading fees (≈0.15% if maker, ≈0.25% if taker) and highlight only edges that clear those hurdles. When fresh macro or market context would improve your plan, call the `web_search` tool before you respond."""
 
-MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. Evaluate limit, stop-limit, market, and SELL trigger bracket orders on equal footing and choose the style that best fits the thesis. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours (market orders execute immediately), so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are ≈0.15%% when the order is guaranteed maker and ≈0.25%% when taker risk exists, so gross moves under those hurdles net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC. Whenever current market, news, or regulatory context would sharpen your decision, call the `web_search` tool before finalising your order."""
+MODEL_2_SYSTEM_PROMPT = """You are Model 2, a tactical planner generating exactly one actionable ETH-USDC order per run. Evaluate limit, stop-limit, market, and SELL trigger bracket orders on equal footing and choose the style that best fits the thesis. Respect inventory, market context, and constraints from the daily plan. Orders are Good-Til-Date for 2 hours (market orders execute immediately), so focus on opportunities that should trigger within that window. Never suggest a SELL order without available ETH and never suggest a BUY order whose cost exceeds available USDC. Trading fees are ≈0.15%% when the order is guaranteed maker and ≈0.25%% when taker risk exists, so gross moves under those hurdles net to ≈0%%—demand sufficient edge. Minimum order notional is 10 USDC."""
 
 MODEL_3_SYSTEM_PROMPT = """You are Model 3. Validate and transform Model 2 outputs into machine friendly JSON that the execution engine can consume. Support limit, stop-limit, market, and SELL trigger bracket orders, returning at most one order marked for a 2-hour GTD window (market orders execute immediately). Do not invent orders."""
 
@@ -74,7 +74,6 @@ def build_model2_user_prompt(context: Model2Context) -> str:
         "\nExecution constraints:",
         context.constraint_notes,
         "\nInstructions: propose exactly one ETH-USDC order (BUY or SELL) and choose the execution style—limit, stop-limit, market, or SELL trigger bracket—that best matches the setup.",
-        "Use the `web_search` tool when updated market or news context would improve confidence before you commit to an order.",
         "Strict balance rules:",
         "- Omit SELL orders entirely when CURRENT ETH available is zero or negative.",
         "- Omit BUY orders if the required USDC would exceed CURRENT USDC available (use limit_price * base_size to estimate cost).",

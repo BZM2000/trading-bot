@@ -155,7 +155,6 @@ class LLMClient:
                 {"role": "system", "content": prompts.MODEL_2_SYSTEM_PROMPT},
                 {"role": "user", "content": prompts.build_model2_user_prompt(context)},
             ],
-            tools=[{"type": "web_search"}],
             reasoning={"effort": self.settings.openai_responses_reasoning_m2},
         )
         self.usage.add_response(response)
